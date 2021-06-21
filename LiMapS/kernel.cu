@@ -6,6 +6,8 @@
 #include <string>
 #include <sstream>
 
+#include "cpu/vectors.hpp"
+
 template <class T>
 void ReadColumnVector(const std::string& file, std::vector<T>& dest) {
 	std::ifstream stream(file);
@@ -65,6 +67,10 @@ int main()
 
 	std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
 	std::cout << "Signal size: " << signalSize << std::endl;
+
+	float signalNorm = GetEuclideanNorm(signal);
+	// Just temporary assert to be sure we are doing ok 
+	assert(abs(signalNorm - 129.0749) < 0.0001f);
 
 	return 0;
 }
