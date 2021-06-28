@@ -8,6 +8,10 @@
 
 #include "cpu/vectors.hpp"
 #include "cpu/matrices.hpp"
+#include "cpu/intrin_ext.h"
+#include "cpu/HostLiMapS.h"
+
+#include "gpu/DeviceLiMapSv1.h"
 
 template <class T>
 void ReadColumnVector(const std::string& file, std::vector<T>& dest) {
@@ -21,7 +25,7 @@ void ReadColumnVector(const std::string& file, std::vector<T>& dest) {
 	}
 }
 
-void ReadMatrix(const std::string& file, std::unique_ptr<float[]>& dest, size_t rows, size_t cols) {
+void ReadMatrix(const std::string& file, std::vector<float>& dest, size_t rows, size_t cols) {
 	std::ifstream stream(file);
 	assert(stream.is_open());
 
@@ -55,8 +59,8 @@ int main()
 
 	std::vector<float> actualSolution;
 	std::vector<float> signal;
-	std::unique_ptr<float[]> dictionary = std::make_unique<float[]>(signalSize * dictionaryWords);
-	std::unique_ptr<float[]> dictionaryInverse = std::make_unique<float[]>(signalSize * dictionaryWords);
+	std::vector<float> dictionary(signalSize * dictionaryWords);
+	std::vector<float> dictionaryInverse(signalSize * dictionaryWords);
 
 	// Let' s read our data from a file for the moment and assert that evertything has the right dimension
 	ReadColumnVector("data\\1\\in_true_alpha.txt", actualSolution);
@@ -72,26 +76,17 @@ int main()
 
 	// Stopping criteria declaration
 	const float epsilon = 1e-5;
-	const float alpha_min = 1e-4;
 	const int maxIterations = 1000;
 
 	std::vector<float> alpha(dictionaryWords, 0.0f);
 	std::vector<float> alpha_old(dictionaryWords, 0.0f);
 
-	Mat2VecProduct(dictionaryInverse.get(), dictionaryWords, signalSize, signal.data(), signalSize, alpha.data());
+	HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse);
+	hostLiMapS.Execute(maxIterations);
 
-	float signalNorm = GetEuclideanNorm(signal);
-	// Just temporary assert to be sure we are doing ok 
-	assert(abs(signalNorm - 129.0749) < 0.0001f);
+	DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse);
+	deviceLiMapSV1.Execute(maxIterations);
 
-	float lambda = 1.0f / signalNorm;
-	float gamma = 1.01f;
-
-	for (int i = 0; i < maxIterations; i++)
-	{
-		
-	}
 
 	return 0;
 }
-
