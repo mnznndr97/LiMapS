@@ -10,6 +10,11 @@ private:
 	const int _signalSize;
 	const int _dictionaryWords;
 
+	std::vector<float>& _hostSolution;
+	std::vector<float>& _hostSignal;
+	std::vector<float>& _hostDictionary;
+	std::vector<float>& _hostDictionaryInverse;
+
 	cuda_ptr<float> _solution;
 	cuda_ptr<float> _signal;
 	cuda_ptr<float> _dictionary;
@@ -20,7 +25,7 @@ private:
 
 	cublasHandle_t _cublasHandle;
 
-	const float epsilon = 1e-5f;
+	const float _epsilon = 1e-5f;
 	const float _alphaElementTh = 1e-4f;
 	const float gamma = 1.01f;
 public:

@@ -61,6 +61,9 @@
       <CodeGeneration>compute_50,sm_50</CodeGeneration>
       <AdditionalCompilerOptions>
       </AdditionalCompilerOptions>
+      <InterleaveSourceInPTX>true</InterleaveSourceInPTX>
+      <GenerateLineInfo>true</GenerateLineInfo>
+      <PtxAsOptionV>true</PtxAsOptionV>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -70,6 +73,7 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <PreprocessorDefinitions>WIN32;WIN64;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -81,24 +85,38 @@
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <CodeGeneration>compute_50,sm_50</CodeGeneration>
+      <PtxAsOptionV>true</PtxAsOptionV>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <CudaCompile Include="kernel.cu" />
+    <CudaCompile Include="gpu\benchmarks.cu" />
+    <CudaCompile Include="gpu\DeviceLiMapSv1.cu" />
+    <CudaCompile Include="gpu\threshold_kernels.cu" />
+    <CudaCompile Include="main.cpp">
+      <FileType>CppCode</FileType>
+    </CudaCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="cpu\intrin_ext.h" />
     <ClInclude Include="cpu\HostLiMapS.h" />
     <ClInclude Include="cpu\matrices.hpp" />
     <ClInclude Include="cpu\vectors.hpp" />
+    <CudaCompile Include="gpu\beta_kernels.cu">
+      <FileType>Document</FileType>
+    </CudaCompile>
+    <ClInclude Include="gpu\benchmarks.cuh" />
+    <ClInclude Include="gpu\beta_kernels.cuh">
+      <FileType>Document</FileType>
+    </ClInclude>
+    <ClInclude Include="gpu\threshold_kernels.cuh" />
     <ClInclude Include="gpu\cublas_shared.h" />
     <ClInclude Include="gpu\cuda_shared.h" />
-    <ClInclude Include="gpu\DeviceLiMapSv1.h" />
+    <ClInclude Include="gpu\DeviceLiMapSv1.cuh" />
+    <ClInclude Include="StopWatch.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="cpu\HostLiMapS.cpp" />
     <ClCompile Include="cpu\vectors.cpp" />
-    <ClCompile Include="gpu\DeviceLiMapSv1.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

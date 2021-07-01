@@ -57,7 +57,7 @@ float GetEuclideanNorm(const float* vector, size_t size) {
 	if (size == 0) return 0.0f;
 
 	__m256 sumVector = _mm256_setzero_ps();
-	size_t index = 0;
+	size_t index = 0;	
 	for (index = 0; index < size / 8; index++)
 	{
 		__m256 data = _mm256_load_ps(vector + (index * 8));
@@ -134,7 +134,6 @@ float GetDotProduct(const float* v1, const float* v2, size_t size) {
 }
 
 void ThresholdVec(std::vector<float>& vec, float threshold) {
-	float f = (-0.0f + 0.0f);
 	ThresholdVec(vec.data(), vec.size(), threshold);
 }
 

@@ -6,12 +6,12 @@
 #include <string>
 #include <sstream>
 
-#include "cpu/vectors.hpp"
-#include "cpu/matrices.hpp"
-#include "cpu/intrin_ext.h"
-#include "cpu/HostLiMapS.h"
+#include "StopWatch.h"
 
-#include "gpu/DeviceLiMapSv1.h"
+#include "gpu/benchmarks.cuh"
+
+#include "cpu/HostLiMapS.h"
+#include "gpu/DeviceLiMapSv1.cuh"
 
 template <class T>
 void ReadColumnVector(const std::string& file, std::vector<T>& dest) {
@@ -50,8 +50,13 @@ void ReadMatrix(const std::string& file, std::vector<float>& dest, size_t rows, 
 
 }
 
-int main()
+int main(int argn, char** argc)
 {
+	if (argn > 1 && strcmp(argc[1], "benchmark") == 0) {
+		RunKernelsBenchmarks();
+		return 0;
+	}
+
 	std::cout << " *** LiMapS Implementation ***" << std::endl;
 
 	const int signalSize = 200;
@@ -72,20 +77,27 @@ int main()
 	assert(signal.size() == signalSize);
 
 	std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
-	std::cout << "Signal size: " << signalSize << std::endl;
+	std::cout << "Signal size: " << signalSize << std::endl << std::endl;
+
+	StopWatch sw;
 
 	// Stopping criteria declaration
 	const float epsilon = 1e-5;
 	const int maxIterations = 1000;
 
-	std::vector<float> alpha(dictionaryWords, 0.0f);
-	std::vector<float> alpha_old(dictionaryWords, 0.0f);
-
+	std::cout << "Starting CPU execution ..." << std::endl;
+	sw.Restart();
 	HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse);
 	hostLiMapS.Execute(maxIterations);
+	sw.Stop();
+	std::cout << "CPU execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
+	std::cout << "Starting CuBlas (naive) execution ..." << std::endl;
+	sw.Restart();
 	DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse);
 	deviceLiMapSV1.Execute(maxIterations);
+	sw.Stop();
+	std::cout << "CuBlas (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
 
 	return 0;
