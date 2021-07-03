@@ -1,17 +1,41 @@
-﻿#include "DeviceLiMapSv1.cuh"
+﻿#include "DeviceLiMapSv2.cuh"
 
 #include "cublas_shared.h"
 #include "beta_kernels.cuh"
 #include "threshold_kernels.cuh"
 
-DeviceLiMapSv1::DeviceLiMapSv1(std::vector<float>& solution, std::vector<float>& signal, std::vector<float>& D, std::vector<float>& DINV)
+
+__device__ float* _solutionD;
+__device__ float* _signalD;
+__device__ float* _dictionaryD;
+__device__ float* _dictionaryInverseD;
+__device__ float* _alphaD;
+__device__ float* _alphaOldD;
+
+__device__ float _signalNorm;
+
+__global__ void Norm(const float* vec, size_t size, float* result) {
+}
+
+__global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx == 0) {
+		dim3 blockSize(32);
+		dim3 gridSize((signalSize + blockSize.x - 1) / blockSize.x);
+		Norm << <gridSize, blockSize >> > (_signalD, signalSize, &_signalNorm);
+	}
+	CUDA_CHECKD(cudaDeviceSynchronize());
+
+	int a = (int)_signalNorm;
+}
+
+DeviceLiMapSv2::DeviceLiMapSv2(std::vector<float>& solution, std::vector<float>& signal, std::vector<float>& D, std::vector<float>& DINV)
 	:_signalSize(signal.size()), _dictionaryWords(solution.size()),
 	// To avoid C++ vector copies, let's just store the vector references for our input data. This may be dangerous since the class MUST have the same (or shorted)
 	// scope of our data, but for our purposes should be ok
 	_hostSolution(solution), _hostSignal(signal), _hostDictionary(D), _hostDictionaryInverse(DINV)
 {
-	CUBLAS_CHECK(cublasCreate(&_cublasHandle));
-
 	_solution = make_cuda<float>(solution.size());
 	_signal = make_cuda<float>(signal.size());
 	_dictionary = make_cuda<float>(D.size());
@@ -20,15 +44,35 @@ DeviceLiMapSv1::DeviceLiMapSv1(std::vector<float>& solution, std::vector<float>&
 	_alpha = make_cuda<float>(solution.size());
 	_alphaOld = make_cuda<float>(solution.size());
 
+	// We copy the 
+
+	float* dummyPtr = _solution.get();
+	CUDA_CHECK(cudaMemcpyToSymbol(_solutionD, &dummyPtr, sizeof(void*)));
+
+	dummyPtr = _signal.get();
+	CUDA_CHECK(cudaMemcpyToSymbol(_signalD, &dummyPtr, sizeof(void*)));
+
+	dummyPtr = _dictionary.get();
+	CUDA_CHECK(cudaMemcpyToSymbol(_dictionaryD, &dummyPtr, sizeof(void*)));
+
+	dummyPtr = _dictionaryInverse.get();
+	CUDA_CHECK(cudaMemcpyToSymbol(_dictionaryInverseD, &dummyPtr, sizeof(void*)));
 }
 
-DeviceLiMapSv1::~DeviceLiMapSv1()
+DeviceLiMapSv2::~DeviceLiMapSv2()
 {
-	CUBLAS_CHECK(cublasDestroy(_cublasHandle));
+	
 }
 
-void DeviceLiMapSv1::Execute(int iterations)
+void DeviceLiMapSv2::Execute(int iterations)
 {
+	dim3 blocks(32);
+	dim3 gridSize((_dictionaryWords + blocks.x - 1) / blocks.x);
+
+	LiMapS << < gridSize, blocks >> > (_dictionaryWords, _signalSize);
+
+	/*
+
 	CUBLAS_CHECK(cublasSetVector(_signalSize, sizeof(float), _hostSignal.data(), 1, _signal.get(), 1));
 	CUDA_CHECK(cudaMemcpy(_dictionaryInverse.get(), _hostDictionaryInverse.data(), sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpy(_dictionary.get(), _hostDictionary.data(), sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
@@ -65,7 +109,7 @@ void DeviceLiMapSv1::Execute(int iterations)
 		CUBLAS_CHECK(cublasSscal(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1));
 
 		ThresholdKrnl << <gridSize, blockSize >> > (_alpha.get(), _dictionaryWords, _alphaElementTh);
-		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1, _alphaOld.get(), 1));		
+		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1, _alphaOld.get(), 1));
 
 		lambda = lambda * gamma;
 
@@ -76,4 +120,6 @@ void DeviceLiMapSv1::Execute(int iterations)
 			break;
 		}
 	}
+
+	*/
 }

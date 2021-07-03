@@ -12,6 +12,7 @@
 
 #include "cpu/HostLiMapS.h"
 #include "gpu/DeviceLiMapSv1.cuh"
+#include "gpu/DeviceLiMapSv2.cuh"
 
 template <class T>
 void ReadColumnVector(const std::string& file, std::vector<T>& dest) {
@@ -86,19 +87,34 @@ int main(int argn, char** argc)
 	const int maxIterations = 1000;
 
 	std::cout << "Starting CPU execution ..." << std::endl;
-	sw.Restart();
-	HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse);
-	hostLiMapS.Execute(maxIterations);
-	sw.Stop();
+	{
+		// Just enclose the call in an inner scope to release as soon as possible the extra host resources
+		sw.Restart();
+		HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse);
+		hostLiMapS.Execute(maxIterations);
+		sw.Stop();
+	}
 	std::cout << "CPU execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
 	std::cout << "Starting CuBlas (naive) execution ..." << std::endl;
-	sw.Restart();
-	DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse);
-	deviceLiMapSV1.Execute(maxIterations);
-	sw.Stop();
+	{
+		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
+		sw.Restart();
+		//DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse);
+		//deviceLiMapSV1.Execute(maxIterations);
+		sw.Stop();
+	}
 	std::cout << "CuBlas (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
+	std::cout << "Starting GPU kernel execution ..." << std::endl;
+	{
+		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
+		sw.Restart();
+		DeviceLiMapSv2 deviceLiMapSv2(actualSolution, signal, dictionary, dictionaryInverse);
+		deviceLiMapSv2.Execute(maxIterations);
+		sw.Stop();
+	}
+	std::cout << "GPU kernel  execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
 	return 0;
 }
