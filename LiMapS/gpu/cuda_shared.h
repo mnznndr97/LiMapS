@@ -4,11 +4,20 @@
 #include <memory>
 
 #include "cuda.h"
-#include "cuda_runtime.h"
-#include "device_functions.h"
-#include "cuda_runtime_api.h"
-#include "cuda_device_runtime_api.h"
-#include "device_launch_parameters.h"
+
+#ifdef __INTELLISENSE__
+#define __CUDACC__
+#include "cuda_intrinsics.h"
+#endif  
+
+#include <cuda_runtime.h>
+#include <device_functions.h>
+#include <cuda_runtime_api.h>
+#include <cuda_device_runtime_api.h>
+#include <device_launch_parameters.h>
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
 
 #define CUDA_CHECK(call)                                                                \
 {                                                                                       \

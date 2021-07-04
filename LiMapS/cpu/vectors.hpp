@@ -3,7 +3,6 @@
 #include <assert.h>
 #include <intrin.h>
 #include <vector>
-#include <span>
 
 void AddVec(const float* a, const float* b, float* dest, size_t size);
 float GetEuclideanNorm(const float* vector, size_t size);

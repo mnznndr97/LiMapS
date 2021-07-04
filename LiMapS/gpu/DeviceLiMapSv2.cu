@@ -1,8 +1,13 @@
 ﻿#include "DeviceLiMapSv2.cuh"
 
+#include "cuda_shared.h"
+#include <cooperative_groups.h>
 #include "cublas_shared.h"
+
+#include "kernels.cuh"
 #include "beta_kernels.cuh"
 #include "threshold_kernels.cuh"
+
 
 
 __device__ float* _solutionD;
@@ -12,22 +17,126 @@ __device__ float* _dictionaryInverseD;
 __device__ float* _alphaD;
 __device__ float* _alphaOldD;
 
-__device__ float _signalNorm;
+__device__ float* _beta;
+__device__ float* _intermD;
 
-__global__ void Norm(const float* vec, size_t size, float* result) {
+__device__ float _signalNorm;
+__device__ float _alphaNorm;
+
+__global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
+	// Handle to thread block group
+	cg::thread_block thBlock = cg::this_thread_block();
+	cg::grid_group grid = cg::this_grid();
+
+	__shared__ float signalNorm;
+
+	if (thBlock.thread_rank() == 0) {
+		float* tempNorm = (float*)alloca(sizeof(float));
+		dim3 blockSize(256);
+		Norm << <(signalSize + blockSize.x - 1) / blockSize.x, blockSize.x, blockSize.x / 32 >> > (_signalD, signalSize, tempNorm);
+		cudaDeviceSynchronize();
+
+		signalNorm = *tempNorm;
+	}
+	thBlock.sync();
+
+	//printf("Signal norm from idx %d: %f\r\n", grid.thread_rank(), signalNorm);
 }
 
-__global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
-	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-	if (idx == 0) {
-		dim3 blockSize(32);
-		dim3 gridSize((signalSize + blockSize.x - 1) / blockSize.x);
-		Norm << <gridSize, blockSize >> > (_signalD, signalSize, &_signalNorm);
+__global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
+	cg::grid_group grid = cg::this_grid();
+	if (grid.thread_rank() >= signalSize) {
+		// Our thread is out of range
+		return;
 	}
+
+	float sum = 0.0f;
+	for (size_t i = 0; i < signalSize; i++)
+	{
+		sum = fmaf(_dictionaryInverseD[grid.thread_rank() * signalSize + i], _signalD[i], sum);
+	}
+	_alphaD[grid.thread_rank()] = sum;
+}
+
+__device__ void CalculateInterm(unsigned long long idx, size_t dictionaryWords, size_t signalSize) {
+	if (idx >= signalSize) {
+		// Our thread is out of range
+		return;
+	}
+
+	float sum = 0.0f;
+	for (size_t i = 0; i < dictionaryWords; i++)
+	{
+		sum = fmaf(_dictionaryD[idx * dictionaryWords + i], _beta[i], sum);
+	}
+	_intermD[idx] = sum - _signalD[idx];
+}
+
+
+__global__ void LiMapSImpl(float lambda, size_t dictionaryWords, size_t signalSize) {
+	cg::grid_group grid = cg::this_grid();
+
+	unsigned long long threadIdx = grid.thread_rank();
+	if (threadIdx >= dictionaryWords) {
+		// Our thread is out of range
+		return;
+	}
+
+	float beta = GetBeta(lambda, _alphaD[threadIdx]);
+	CalculateInterm(threadIdx, dictionaryWords, signalSize);
 	CUDA_CHECKD(cudaDeviceSynchronize());
 
-	int a = (int)_signalNorm;
+	float sum = 0.0f;
+	for (size_t i = 0; i < signalSize; i++)
+	{
+		sum = fmaf(_dictionaryInverseD[threadIdx * signalSize + i], _intermD[i], sum);
+	}
+	float newAlpha = beta - sum;
+	_alphaD[threadIdx] = newAlpha >= 1e-4f ? newAlpha : 0.0f;
+}
+
+
+__global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
+	// Handle to thread block group
+	cg::grid_group grid = cg::this_grid();
+
+	dim3 blockSize(256);
+	Norm << <(signalSize + blockSize.x - 1) / blockSize.x, blockSize.x, blockSize.x / 32 >> > (_signalD, signalSize, &_signalNorm);
+	CUDA_CHECKD(cudaDeviceSynchronize());
+	float lambda = 1.0f / _signalNorm;
+
+	_beta = new float[dictionaryWords];
+	_intermD = new float[signalSize];
+
+	dim3 blocks(256);
+	dim3 gridSize((signalSize + blocks.x - 1) / blocks.x);
+	GetAlpha << <gridSize, blocks >> > (dictionaryWords, signalSize);
+	memcpy(_alphaOldD, _alphaD, dictionaryWords * sizeof(float));
+
+	int i = 0;
+	for (i = 0; i < 1000; i++)
+	{
+		blocks.x = 32;
+		gridSize.x = (dictionaryWords + blocks.x - 1) / blocks.x;
+
+		// We set the alphaOld as the current alpha
+		float* temp;
+		temp = _alphaD;
+		_alphaD = _alphaOldD;
+		_alphaOldD = temp;
+
+		LiMapSImpl << <gridSize, blockSize >> > (lambda, dictionaryWords, signalSize);
+		CUDA_CHECKD(cudaDeviceSynchronize());
+
+		lambda = 1.01f * lambda;
+		NormDiff << <(signalSize + blockSize.x - 1) / blockSize.x, blockSize.x, blockSize.x / 32 >> > (_alphaD, _alphaOldD, dictionaryWords, &_alphaNorm);
+		if (_alphaNorm < 1e-5f) {
+			break;
+		}
+	}
+
+	delete[] _beta;
+	delete[] _intermD;
 }
 
 DeviceLiMapSv2::DeviceLiMapSv2(std::vector<float>& solution, std::vector<float>& signal, std::vector<float>& D, std::vector<float>& DINV)
@@ -45,7 +154,6 @@ DeviceLiMapSv2::DeviceLiMapSv2(std::vector<float>& solution, std::vector<float>&
 	_alphaOld = make_cuda<float>(solution.size());
 
 	// We copy the 
-
 	float* dummyPtr = _solution.get();
 	CUDA_CHECK(cudaMemcpyToSymbol(_solutionD, &dummyPtr, sizeof(void*)));
 
@@ -57,20 +165,31 @@ DeviceLiMapSv2::DeviceLiMapSv2(std::vector<float>& solution, std::vector<float>&
 
 	dummyPtr = _dictionaryInverse.get();
 	CUDA_CHECK(cudaMemcpyToSymbol(_dictionaryInverseD, &dummyPtr, sizeof(void*)));
+
+	dummyPtr = _alpha.get();
+	CUDA_CHECK(cudaMemcpyToSymbol(_alphaD, &dummyPtr, sizeof(void*)));
+
+	dummyPtr = _alphaOld.get();
+	CUDA_CHECK(cudaMemcpyToSymbol(_alphaOldD, &dummyPtr, sizeof(void*)));
 }
 
 DeviceLiMapSv2::~DeviceLiMapSv2()
 {
-	
+
 }
 
 void DeviceLiMapSv2::Execute(int iterations)
 {
+	CUDA_CHECK(cudaMemcpy(_signal.get(), _hostSignal.data(), sizeof(float) * _signalSize, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(_dictionaryInverse.get(), _hostDictionaryInverse.data(), sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(_dictionary.get(), _hostDictionary.data(), sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
+
 	dim3 blocks(32);
 	dim3 gridSize((_dictionaryWords + blocks.x - 1) / blocks.x);
 
-	LiMapS << < gridSize, blocks >> > (_dictionaryWords, _signalSize);
-
+	//LiMapS << < gridSize, blocks >> > (_dictionaryWords, _signalSize);
+	LiMapS << < 1, 1 >> > (_dictionaryWords, _signalSize);
+	CUDA_CHECK(cudaDeviceSynchronize());
 	/*
 
 	CUBLAS_CHECK(cublasSetVector(_signalSize, sizeof(float), _hostSignal.data(), 1, _signal.get(), 1));

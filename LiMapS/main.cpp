@@ -53,8 +53,9 @@ void ReadMatrix(const std::string& file, std::vector<float>& dest, size_t rows, 
 
 int main(int argn, char** argc)
 {
-	if (argn > 1 && strcmp(argc[1], "benchmark") == 0) {
-		RunKernelsBenchmarks();
+	if (argn > 1 && strcmp(argc[1], "norm-benchmark") == 0) {
+		RunNormBenchmarks(atoi(argc[2]));
+		
 		return 0;
 	}
 
@@ -89,8 +90,9 @@ int main(int argn, char** argc)
 	std::cout << "Starting CPU execution ..." << std::endl;
 	{
 		// Just enclose the call in an inner scope to release as soon as possible the extra host resources
-		sw.Restart();
 		HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse);
+
+		sw.Restart();
 		hostLiMapS.Execute(maxIterations);
 		sw.Stop();
 	}
@@ -99,18 +101,22 @@ int main(int argn, char** argc)
 	std::cout << "Starting CuBlas (naive) execution ..." << std::endl;
 	{
 		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
+#if NDEBUG
+		/*DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse);
+
 		sw.Restart();
-		//DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse);
-		//deviceLiMapSV1.Execute(maxIterations);
-		sw.Stop();
+		deviceLiMapSV1.Execute(maxIterations);
+		sw.Stop();*/
+#endif
 	}
 	std::cout << "CuBlas (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
 	std::cout << "Starting GPU kernel execution ..." << std::endl;
 	{
 		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
-		sw.Restart();
 		DeviceLiMapSv2 deviceLiMapSv2(actualSolution, signal, dictionary, dictionaryInverse);
+
+		sw.Restart();
 		deviceLiMapSv2.Execute(maxIterations);
 		sw.Stop();
 	}
