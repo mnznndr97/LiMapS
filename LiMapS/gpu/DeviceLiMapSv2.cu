@@ -23,26 +23,6 @@ __device__ float* _intermD;
 __device__ float _signalNorm;
 __device__ float _alphaNorm;
 
-__global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
-	// Handle to thread block group
-	cg::thread_block thBlock = cg::this_thread_block();
-	cg::grid_group grid = cg::this_grid();
-
-	__shared__ float signalNorm;
-
-	if (thBlock.thread_rank() == 0) {
-		float* tempNorm = (float*)alloca(sizeof(float));
-		dim3 blockSize(256);
-		Norm << <(signalSize + blockSize.x - 1) / blockSize.x, blockSize.x, blockSize.x / 32 >> > (_signalD, signalSize, tempNorm);
-		cudaDeviceSynchronize();
-
-		signalNorm = *tempNorm;
-	}
-	thBlock.sync();
-
-	//printf("Signal norm from idx %d: %f\r\n", grid.thread_rank(), signalNorm);
-}
-
 __global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
 	cg::grid_group grid = cg::this_grid();
 	if (grid.thread_rank() >= signalSize) {
@@ -67,7 +47,8 @@ __device__ void CalculateInterm(unsigned long long idx, size_t dictionaryWords, 
 	float sum = 0.0f;
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
-		sum = fmaf(_dictionaryD[idx * dictionaryWords + i], _beta[i], sum);
+		sum += _dictionaryD[idx * dictionaryWords + i] * _beta[i];
+		//sum = fmaf(_dictionaryD[idx * dictionaryWords + i], _beta[i], sum);
 	}
 	_intermD[idx] = sum - _signalD[idx];
 }
@@ -76,23 +57,26 @@ __device__ void CalculateInterm(unsigned long long idx, size_t dictionaryWords, 
 __global__ void LiMapSImpl(float lambda, size_t dictionaryWords, size_t signalSize) {
 	cg::grid_group grid = cg::this_grid();
 
-	unsigned long long threadIdx = grid.thread_rank();
-	if (threadIdx >= dictionaryWords) {
+	unsigned long long index = grid.thread_rank();
+	if (index >= dictionaryWords) {
 		// Our thread is out of range
 		return;
 	}
 
-	float beta = GetBeta(lambda, _alphaD[threadIdx]);
-	CalculateInterm(threadIdx, dictionaryWords, signalSize);
+	float beta = GetBeta(lambda, _alphaD[index]);
+	_beta[index] = beta;
+	CUDA_CHECKD(cudaDeviceSynchronize());
+
+	CalculateInterm(index, dictionaryWords, signalSize);
 	CUDA_CHECKD(cudaDeviceSynchronize());
 
 	float sum = 0.0f;
 	for (size_t i = 0; i < signalSize; i++)
 	{
-		sum = fmaf(_dictionaryInverseD[threadIdx * signalSize + i], _intermD[i], sum);
+		sum = fmaf(_dictionaryInverseD[index * signalSize + i], _intermD[i], sum);
 	}
 	float newAlpha = beta - sum;
-	_alphaD[threadIdx] = newAlpha >= 1e-4f ? newAlpha : 0.0f;
+	_alphaD[index] = newAlpha >= 1e-4f ? newAlpha : 0.0f;
 }
 
 
@@ -100,9 +84,10 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 	// Handle to thread block group
 	cg::grid_group grid = cg::this_grid();
 
-	dim3 blockSize(256);
-	Norm << <(signalSize + blockSize.x - 1) / blockSize.x, blockSize.x, blockSize.x / 32 >> > (_signalD, signalSize, &_signalNorm);
-	CUDA_CHECKD(cudaDeviceSynchronize());
+	_signalNorm = 0.0f;
+	Norm(_signalD, signalSize, &_signalNorm);
+	assert(_signalNorm >= 0.0f);
+
 	float lambda = 1.0f / _signalNorm;
 
 	_beta = new float[dictionaryWords];
@@ -111,30 +96,31 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 	dim3 blocks(256);
 	dim3 gridSize((signalSize + blocks.x - 1) / blocks.x);
 	GetAlpha << <gridSize, blocks >> > (dictionaryWords, signalSize);
+	CUDA_CHECKD(cudaDeviceSynchronize());
 	memcpy(_alphaOldD, _alphaD, dictionaryWords * sizeof(float));
 
 	int i = 0;
 	for (i = 0; i < 1000; i++)
 	{
-		blocks.x = 32;
-		gridSize.x = (dictionaryWords + blocks.x - 1) / blocks.x;
-
 		// We set the alphaOld as the current alpha
 		float* temp;
 		temp = _alphaD;
 		_alphaD = _alphaOldD;
 		_alphaOldD = temp;
 
-		LiMapSImpl << <gridSize, blockSize >> > (lambda, dictionaryWords, signalSize);
+		blocks.x = 32;
+		gridSize.x = (dictionaryWords + blocks.x - 1) / blocks.x;
+		LiMapSImpl << <gridSize, blocks >> > (lambda, dictionaryWords, signalSize);
 		CUDA_CHECKD(cudaDeviceSynchronize());
 
 		lambda = 1.01f * lambda;
-		NormDiff << <(signalSize + blockSize.x - 1) / blockSize.x, blockSize.x, blockSize.x / 32 >> > (_alphaD, _alphaOldD, dictionaryWords, &_alphaNorm);
+		NormDiff(_alphaD, _alphaOldD, dictionaryWords, &_alphaNorm);
 		if (_alphaNorm < 1e-5f) {
 			break;
 		}
 	}
 
+	printf("kernel iterations: %d\r\n", i);
 	delete[] _beta;
 	delete[] _intermD;
 }

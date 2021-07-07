@@ -53,6 +53,12 @@ void ReadMatrix(const std::string& file, std::vector<float>& dest, size_t rows, 
 
 int main(int argn, char** argc)
 {
+	cudaDeviceProp props;
+	cudaGetDeviceProperties(&props, 0);
+
+	std::cout << props.name << std::endl;
+	std::cout <<  "\tThreads per block: " << props.maxThreadsPerBlock << std::endl;
+
 	if (argn > 1 && strcmp(argc[1], "norm-benchmark") == 0) {
 		RunNormBenchmarks(atoi(argc[2]));
 		

@@ -62,7 +62,7 @@
       <AdditionalCompilerOptions>
       </AdditionalCompilerOptions>
       <InterleaveSourceInPTX>true</InterleaveSourceInPTX>
-      <GenerateLineInfo>true</GenerateLineInfo>
+      <GenerateLineInfo>false</GenerateLineInfo>
       <PtxAsOptionV>true</PtxAsOptionV>
       <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
     </CudaCompile>
