@@ -2,10 +2,10 @@
 
 #include "cuda_shared.h"
 #include <cooperative_groups.h>
+#include <cuda/std/functional>
 #include "cublas_shared.h"
 
 #include "kernels.cuh"
-#include "beta_kernels.cuh"
 #include "threshold_kernels.cuh"
 
 
@@ -20,12 +20,12 @@ __device__ float* _alphaOldD;
 __device__ float* _beta;
 __device__ float* _intermD;
 
-__device__ float _signalNorm;
-__device__ float _alphaNorm;
+__device__ float _signalSquareSum;
+__device__ float _alphaDiffSquareSum;
 
 __global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
 	cg::grid_group grid = cg::this_grid();
-	if (grid.thread_rank() >= signalSize) {
+	if (grid.thread_rank() >= dictionaryWords) {
 		// Our thread is out of range
 		return;
 	}
@@ -33,12 +33,31 @@ __global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
 	float sum = 0.0f;
 	for (size_t i = 0; i < signalSize; i++)
 	{
-		sum = fmaf(_dictionaryInverseD[grid.thread_rank() * signalSize + i], _signalD[i], sum);
+		sum += _dictionaryInverseD[grid.thread_rank() * signalSize + i] * _signalD[i];
+		//sum = fmaf(_dictionaryInverseD[grid.thread_rank() * signalSize + i], _signalD[i], sum);
 	}
+	// AlphaOld and Alpha should be aligned at the first iteration, so let's write them directly here
+	// This avoids us a vector copy later
 	_alphaD[grid.thread_rank()] = sum;
+	_alphaOldD[grid.thread_rank()] = sum;
 }
 
-__device__ void CalculateInterm(unsigned long long idx, size_t dictionaryWords, size_t signalSize) {
+__global__ void CalculateBetaStep(float lambda, size_t dictionaryWords, size_t signalSize) {
+	cg::grid_group grid = cg::this_grid();
+
+	unsigned long long index = grid.thread_rank();
+	if (index >= dictionaryWords) {
+		// Our thread is out of range
+		return;
+	}
+
+	_beta[index] = GetBeta(lambda, _alphaD[index]);
+}
+
+__global__ void CalculateIntermStep(size_t dictionaryWords, size_t signalSize) {
+	cg::grid_group grid = cg::this_grid();
+
+	unsigned long long idx = grid.thread_rank();
 	if (idx >= signalSize) {
 		// Our thread is out of range
 		return;
@@ -53,30 +72,23 @@ __device__ void CalculateInterm(unsigned long long idx, size_t dictionaryWords, 
 	_intermD[idx] = sum - _signalD[idx];
 }
 
-
-__global__ void LiMapSImpl(float lambda, size_t dictionaryWords, size_t signalSize) {
+__global__ void CalculateNewAlphaStep(size_t dictionaryWords, size_t signalSize) {
 	cg::grid_group grid = cg::this_grid();
 
-	unsigned long long index = grid.thread_rank();
-	if (index >= dictionaryWords) {
+	unsigned long long idx = grid.thread_rank();
+	if (idx >= dictionaryWords) {
 		// Our thread is out of range
 		return;
 	}
 
-	float beta = GetBeta(lambda, _alphaD[index]);
-	_beta[index] = beta;
-	CUDA_CHECKD(cudaDeviceSynchronize());
-
-	CalculateInterm(index, dictionaryWords, signalSize);
-	CUDA_CHECKD(cudaDeviceSynchronize());
-
 	float sum = 0.0f;
 	for (size_t i = 0; i < signalSize; i++)
 	{
-		sum = fmaf(_dictionaryInverseD[index * signalSize + i], _intermD[i], sum);
+		sum += _dictionaryInverseD[idx * signalSize + i] * _intermD[i];
+		//sum = fmaf(_dictionaryInverseD[idx * signalSize + i], _intermD[i], sum);
 	}
-	float newAlpha = beta - sum;
-	_alphaD[index] = newAlpha >= 1e-4f ? newAlpha : 0.0f;
+	float newAlpha = _beta[idx] - sum;
+	_alphaD[idx] = abs(newAlpha) >= 1e-4f ? newAlpha : 0.0f;
 }
 
 
@@ -84,38 +96,58 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 	// Handle to thread block group
 	cg::grid_group grid = cg::this_grid();
 
-	_signalNorm = 0.0f;
-	Norm(_signalD, signalSize, &_signalNorm);
-	assert(_signalNorm >= 0.0f);
 
-	float lambda = 1.0f / _signalNorm;
+	// 1) The first step of the LiMapS algorithm is to calculate the starting lamba coefficient. In order to do so, we need to calculate
+	// the signal norm. So we enqueue on the default stream the SquareSum operation and then we wait for it.
+	// The norm is foundamental for the next steps so there is nothing that we can do to avoid the sync time waste
+	_signalSquareSum = 0.0f;
+	dim3 blocks(256);
+	SquareSumKrnlUnroll<8> << <GetGridSize(blocks, signalSize, 8), blocks, blocks.x / warpSize >> > (_signalD, signalSize, &_signalSquareSum);
+	CUDA_CHECKD(cudaDeviceSynchronize());
+	assert(_signalSquareSum >= 0.0f);
+
+	float lambda = 1.0f / sqrt(_signalSquareSum);
 
 	_beta = new float[dictionaryWords];
 	_intermD = new float[signalSize];
 
-	dim3 blocks(256);
-	dim3 gridSize((signalSize + blocks.x - 1) / blocks.x);
-	GetAlpha << <gridSize, blocks >> > (dictionaryWords, signalSize);
+	// 2) The second step of the algorithm is to prepare the starting alpha vector so also here we 
+	// Launch the kernel calculation and we synchronize the device
+	GetAlpha << <GetGridSize(blocks, dictionaryWords), blocks >> > (dictionaryWords, signalSize);
 	CUDA_CHECKD(cudaDeviceSynchronize());
-	memcpy(_alphaOldD, _alphaD, dictionaryWords * sizeof(float));
 
 	int i = 0;
 	for (i = 0; i < 1000; i++)
 	{
-		// We set the alphaOld as the current alpha
-		float* temp;
-		temp = _alphaD;
-		_alphaD = _alphaOldD;
-		_alphaOldD = temp;
+		// We set the alphaOld as the current alpha. We can do this by just swapping the pointer, avoiding 
+		// useless data transfer
+		cuda::std::swap(_alphaD, _alphaOldD);
 
+		// From here, we split our computation next alpha computation in different step. This is necessary since some calculation
+		// depend on data that should accessed after a global sync point (ex, after calculating the intermediate (dic * beta - sig) vector
+		// Since global sync CANNOT be achieved (at least in old devices that not support grid_group::sync() method), we can do better:
+		// we just queue our splitted work on the default stream, and then we just sync with the device at the end from this kenel.
+		// In this way, the work is executed with all data dependencies respected
+
+		// 3.1) We need to compute the beta vector for this iterarion
 		blocks.x = 32;
-		gridSize.x = (dictionaryWords + blocks.x - 1) / blocks.x;
-		LiMapSImpl << <gridSize, blocks >> > (lambda, dictionaryWords, signalSize);
-		CUDA_CHECKD(cudaDeviceSynchronize());
+		CalculateBetaStep << <GetGridSize(blocks, dictionaryWords), blocks >> > (lambda, dictionaryWords, signalSize);
+
+		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
+		CalculateIntermStep << <GetGridSize(blocks, signalSize), blocks >> > (dictionaryWords, signalSize);
+
+		// 3.3) We compute the new alpha with the thresholding at the end
+		CalculateNewAlphaStep << <GetGridSize(blocks, dictionaryWords), blocks >> > (dictionaryWords, signalSize);
 
 		lambda = 1.01f * lambda;
-		NormDiff(_alphaD, _alphaOldD, dictionaryWords, &_alphaNorm);
-		if (_alphaNorm < 1e-5f) {
+
+		// 3.4) We see how much alpha is changed
+		_alphaDiffSquareSum = 0.0f;
+		SquareDiffSumKrnlUnroll<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaD, _alphaOldD, dictionaryWords, &_alphaDiffSquareSum);
+		CUDA_CHECKD(cudaDeviceSynchronize());
+
+		float norm = sqrt(_alphaDiffSquareSum);
+		if (norm < 1e-5f) {
 			break;
 		}
 	}
@@ -131,6 +163,8 @@ DeviceLiMapSv2::DeviceLiMapSv2(std::vector<float>& solution, std::vector<float>&
 	// scope of our data, but for our purposes should be ok
 	_hostSolution(solution), _hostSignal(signal), _hostDictionary(D), _hostDictionaryInverse(DINV)
 {
+	_alphaH.resize(_dictionaryWords);
+
 	_solution = make_cuda<float>(solution.size());
 	_signal = make_cuda<float>(signal.size());
 	_dictionary = make_cuda<float>(D.size());
@@ -176,55 +210,7 @@ void DeviceLiMapSv2::Execute(int iterations)
 	//LiMapS << < gridSize, blocks >> > (_dictionaryWords, _signalSize);
 	LiMapS << < 1, 1 >> > (_dictionaryWords, _signalSize);
 	CUDA_CHECK(cudaDeviceSynchronize());
-	/*
 
-	CUBLAS_CHECK(cublasSetVector(_signalSize, sizeof(float), _hostSignal.data(), 1, _signal.get(), 1));
-	CUDA_CHECK(cudaMemcpy(_dictionaryInverse.get(), _hostDictionaryInverse.data(), sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
-	CUDA_CHECK(cudaMemcpy(_dictionary.get(), _hostDictionary.data(), sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
-
-	const float alphaScalar = 1.0f;
-	const float negAlphaScalar = -1.0f;
-	const float betaScalar = 0.0f;
-	CUBLAS_CHECK(cublasSgemv(_cublasHandle, CUBLAS_OP_T, _signalSize, _dictionaryWords, &alphaScalar, _dictionaryInverse.get(), _signalSize, _signal.get(), 1, &betaScalar, _alpha.get(), 1));
-
-	float signalNorm = 0.0f;
-	CUBLAS_CHECK(cublasSnrm2(_cublasHandle, _signalSize, _signal.get(), 1, &signalNorm));
-	float lambda = 1.0f / signalNorm;
-
-	cuda_ptr<float> beta = make_cuda<float>(_dictionaryWords);
-	cuda_ptr<float> interm = make_cuda<float>(_signalSize);
-
-	dim3 blockSize(128);
-	dim3 gridSize(_dictionaryWords + blockSize.x - 1 / blockSize.x);
-
-	int iteration = 0;
-	for (; iteration < iterations; iteration++)
-	{
-		// First we save the current alpha as the old one, in order to use it later
-		CUBLAS_CHECK(cublasScopy(_cublasHandle, _dictionaryWords, _alpha.get(), 1, _alphaOld.get(), 1));
-
-		GetBetaKrnl << <gridSize, blockSize >> > (lambda, _alpha.get(), beta.get(), _dictionaryWords);
-
-		CUBLAS_CHECK(cublasSgemv(_cublasHandle, CUBLAS_OP_T, _dictionaryWords, _signalSize, &alphaScalar, _dictionary.get(), _dictionaryWords, beta.get(), 1, &betaScalar, interm.get(), 1));
-		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _signalSize, &negAlphaScalar, _signal.get(), 1, interm.get(), 1));
-
-		CUBLAS_CHECK(cublasSgemv(_cublasHandle, CUBLAS_OP_T, _signalSize, _dictionaryWords, &alphaScalar, _dictionaryInverse.get(), _signalSize, interm.get(), 1, &betaScalar, _alpha.get(), 1));
-		// axpy takes a single input/out parameter so we have to negate our subtraction and then multiply the result by -1.0 later
-		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _dictionaryWords, &negAlphaScalar, beta.get(), 1, _alpha.get(), 1));
-		CUBLAS_CHECK(cublasSscal(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1));
-
-		ThresholdKrnl << <gridSize, blockSize >> > (_alpha.get(), _dictionaryWords, _alphaElementTh);
-		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1, _alphaOld.get(), 1));
-
-		lambda = lambda * gamma;
-
-		float diffNorm = 0.0f;
-		CUBLAS_CHECK(cublasSnrm2(_cublasHandle, _dictionaryWords, _alphaOld.get(), 1, &diffNorm));
-		if (diffNorm < _epsilon) {
-			// We are done with the iterations. Norm is very small
-			break;
-		}
-	}
-
-	*/
+	CUDA_CHECK(cudaMemcpy(_alphaH.data(), _alpha.get(), sizeof(float) * _dictionaryWords, cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaDeviceSynchronize());
 }

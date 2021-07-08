@@ -1,7 +1,7 @@
 ﻿#include "DeviceLiMapSv1.cuh"
 
 #include "cublas_shared.h"
-#include "beta_kernels.cuh"
+#include "kernels.cuh"
 #include "threshold_kernels.cuh"
 
 DeviceLiMapSv1::DeviceLiMapSv1(std::vector<float>& solution, std::vector<float>& signal, std::vector<float>& D, std::vector<float>& DINV)

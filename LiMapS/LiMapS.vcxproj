@@ -105,13 +105,7 @@
     <ClInclude Include="cpu\HostLiMapS.h" />
     <ClInclude Include="cpu\matrices.hpp" />
     <ClInclude Include="cpu\vectors.hpp" />
-    <CudaCompile Include="gpu\beta_kernels.cu">
-      <FileType>Document</FileType>
-    </CudaCompile>
     <ClInclude Include="gpu\benchmarks.cuh" />
-    <ClInclude Include="gpu\beta_kernels.cuh">
-      <FileType>Document</FileType>
-    </ClInclude>
     <ClInclude Include="gpu\cuda_intrinsics.h" />
     <ClInclude Include="gpu\DeviceLiMapSv2.cuh" />
     <ClInclude Include="gpu\kernels.cuh" />

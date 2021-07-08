@@ -5,7 +5,6 @@
 #include "cuda_shared.h"
 #include "cublas_shared.h"
 #include "kernels.cuh"
-#include "beta_kernels.cuh"
 #include "threshold_kernels.cuh"
 
 

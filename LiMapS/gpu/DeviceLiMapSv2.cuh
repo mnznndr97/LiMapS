@@ -14,6 +14,7 @@ private:
 	std::vector<float>& _hostSignal;
 	std::vector<float>& _hostDictionary;
 	std::vector<float>& _hostDictionaryInverse;
+	std::vector<float> _alphaH;
 
 	cuda_ptr<float> _solution;
 	cuda_ptr<float> _signal;
@@ -31,4 +32,6 @@ public:
 	virtual ~DeviceLiMapSv2();
 
 	void Execute(int iterations);
+
+	inline const std::vector<float>& GetAlpha() const { return _alphaH; }
 };

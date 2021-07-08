@@ -80,4 +80,6 @@ void HostLiMapS::Execute(int iterations)
 			break;
 		}
 	}
+
+	printf("CPU iterations: %d\n", iteration);
 }

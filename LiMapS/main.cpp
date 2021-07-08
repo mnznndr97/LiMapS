@@ -57,11 +57,11 @@ int main(int argn, char** argc)
 	cudaGetDeviceProperties(&props, 0);
 
 	std::cout << props.name << std::endl;
-	std::cout <<  "\tThreads per block: " << props.maxThreadsPerBlock << std::endl;
+	std::cout << "\tThreads per block: " << props.maxThreadsPerBlock << std::endl;
 
 	if (argn > 1 && strcmp(argc[1], "norm-benchmark") == 0) {
 		RunNormBenchmarks(atoi(argc[2]));
-		
+
 		return 0;
 	}
 
@@ -94,25 +94,25 @@ int main(int argn, char** argc)
 	const int maxIterations = 1000;
 
 	std::cout << "Starting CPU execution ..." << std::endl;
-	{
-		// Just enclose the call in an inner scope to release as soon as possible the extra host resources
-		HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse);
 
-		sw.Restart();
-		hostLiMapS.Execute(maxIterations);
-		sw.Stop();
-	}
+	// Just enclose the call in an inner scope to release as soon as possible the extra host resources
+	HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse);
+
+	sw.Restart();
+	hostLiMapS.Execute(maxIterations);
+	sw.Stop();
+
 	std::cout << "CPU execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
 	std::cout << "Starting CuBlas (naive) execution ..." << std::endl;
 	{
 		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
 #if NDEBUG
-		/*DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse);
+		DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse);
 
 		sw.Restart();
 		deviceLiMapSV1.Execute(maxIterations);
-		sw.Stop();*/
+		sw.Stop();
 #endif
 	}
 	std::cout << "CuBlas (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
@@ -125,6 +125,18 @@ int main(int argn, char** argc)
 		sw.Restart();
 		deviceLiMapSv2.Execute(maxIterations);
 		sw.Stop();
+
+		const std::vector<float>& hostResult = hostLiMapS.GetAlpha();
+		const std::vector<float>& kernelResult = deviceLiMapSv2.GetAlpha();
+
+		std::cout.precision(std::numeric_limits<float>::max_digits10);
+		for (size_t i = 0; i < dictionaryWords; i++)
+		{
+			if (hostResult[i] != kernelResult[i])
+			{
+				std::cout << "Alpha[" << i << "] mismatch: " << hostResult[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
+			}
+		}
 	}
 	std::cout << "GPU kernel  execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 

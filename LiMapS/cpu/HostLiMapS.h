@@ -30,4 +30,6 @@ public:
 
 	void Execute(int iterations);
 
+	inline const std::vector<float>& GetAlpha() const { return _alpha; }
+
 };
