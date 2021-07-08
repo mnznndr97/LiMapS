@@ -101,6 +101,7 @@
     </CudaCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="BaseLiMapS.h" />
     <ClInclude Include="cpu\intrin_ext.h" />
     <ClInclude Include="cpu\HostLiMapS.h" />
     <ClInclude Include="cpu\matrices.hpp" />

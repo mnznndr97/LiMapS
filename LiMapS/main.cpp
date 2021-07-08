@@ -14,19 +14,19 @@
 #include "gpu/DeviceLiMapSv1.cuh"
 #include "gpu/DeviceLiMapSv2.cuh"
 
-template <class T>
-void ReadColumnVector(const std::string& file, std::vector<T>& dest) {
+void ReadColumnVector(const std::string& file, float* dest) {
 	std::ifstream stream(file);
 	assert(stream.is_open());
 
 	// Actual solution is a column vector, in the matrix file each element is on a single line
-	T data;
+	int i = 0;
+	float data;
 	while (stream >> data) {
-		dest.push_back(data);
+		dest[i++] = data;
 	}
 }
 
-void ReadMatrix(const std::string& file, std::vector<float>& dest, size_t rows, size_t cols) {
+void ReadMatrix(const std::string& file, float* dest, size_t rows, size_t cols) {
 	std::ifstream stream(file);
 	assert(stream.is_open());
 
@@ -67,19 +67,25 @@ int main(int argn, char** argc)
 
 	std::cout << " *** LiMapS Implementation ***" << std::endl;
 
-	const int signalSize = 200;
-	const int dictionaryWords = 800;
+	const int signalSize = 2000;
+	const int dictionaryWords = 8000;
 
-	std::vector<float> actualSolution;
-	std::vector<float> signal;
-	std::vector<float> dictionary(signalSize * dictionaryWords);
-	std::vector<float> dictionaryInverse(signalSize * dictionaryWords);
+	// We may use some async CUDA memories operation so better to declare our pointer as non-paginable memory
+	float* actualSolution;
+	float* signal;
+	float* dictionary;
+	float* dictionaryInverse;
+
+	CUDA_CHECK(cudaMallocHost(&actualSolution, sizeof(float) * dictionaryWords));
+	CUDA_CHECK(cudaMallocHost(&signal, sizeof(float) * signalSize));
+	CUDA_CHECK(cudaMallocHost(&dictionary, sizeof(float) * dictionaryWords * signalSize));
+	CUDA_CHECK(cudaMallocHost(&dictionaryInverse, sizeof(float) * dictionaryWords * signalSize));
 
 	// Let' s read our data from a file for the moment and assert that evertything has the right dimension
-	ReadColumnVector("data\\1\\in_true_alpha.txt", actualSolution);
-	ReadColumnVector("data\\1\\in_signal.txt", signal);
-	ReadMatrix("data\\1\\in_D.txt", dictionary, signalSize, dictionaryWords);
-	ReadMatrix("data\\1\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
+	ReadColumnVector("data\\2\\in_true_alpha.txt", actualSolution);
+	ReadColumnVector("data\\2\\in_signal.txt", signal);
+	ReadMatrix("data\\2\\in_D.txt", dictionary, signalSize, dictionaryWords);
+	ReadMatrix("data\\2\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
 
 	assert(actualSolution.size() == dictionaryWords);
 	assert(signal.size() == signalSize);
@@ -96,7 +102,7 @@ int main(int argn, char** argc)
 	std::cout << "Starting CPU execution ..." << std::endl;
 
 	// Just enclose the call in an inner scope to release as soon as possible the extra host resources
-	HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse);
+	HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
 
 	sw.Restart();
 	hostLiMapS.Execute(maxIterations);
@@ -108,11 +114,11 @@ int main(int argn, char** argc)
 	{
 		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
 #if NDEBUG
-		DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse);
+		/*DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse);
 
 		sw.Restart();
 		deviceLiMapSV1.Execute(maxIterations);
-		sw.Stop();
+		sw.Stop();*/
 #endif
 	}
 	std::cout << "CuBlas (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
@@ -120,7 +126,7 @@ int main(int argn, char** argc)
 	std::cout << "Starting GPU kernel execution ..." << std::endl;
 	{
 		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
-		DeviceLiMapSv2 deviceLiMapSv2(actualSolution, signal, dictionary, dictionaryInverse);
+		DeviceLiMapSv2 deviceLiMapSv2(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
 
 		sw.Restart();
 		deviceLiMapSv2.Execute(maxIterations);
@@ -140,5 +146,12 @@ int main(int argn, char** argc)
 	}
 	std::cout << "GPU kernel  execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
+
+	/* ----- Cleanup ----- */
+
+	CUDA_CHECK(cudaFreeHost(actualSolution));
+	CUDA_CHECK(cudaFreeHost(signal));
+	CUDA_CHECK(cudaFreeHost(dictionary));
+	CUDA_CHECK(cudaFreeHost(dictionaryInverse));
 	return 0;
 }

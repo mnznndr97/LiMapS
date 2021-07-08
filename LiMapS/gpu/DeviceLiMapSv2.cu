@@ -33,8 +33,8 @@ __global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
 	float sum = 0.0f;
 	for (size_t i = 0; i < signalSize; i++)
 	{
-		sum += _dictionaryInverseD[grid.thread_rank() * signalSize + i] * _signalD[i];
-		//sum = fmaf(_dictionaryInverseD[grid.thread_rank() * signalSize + i], _signalD[i], sum);
+		//sum += _dictionaryInverseD[grid.thread_rank() * signalSize + i] * _signalD[i];
+		sum = fmaf(_dictionaryInverseD[grid.thread_rank() * signalSize + i], _signalD[i], sum);
 	}
 	// AlphaOld and Alpha should be aligned at the first iteration, so let's write them directly here
 	// This avoids us a vector copy later
@@ -66,8 +66,8 @@ __global__ void CalculateIntermStep(size_t dictionaryWords, size_t signalSize) {
 	float sum = 0.0f;
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
-		sum += _dictionaryD[idx * dictionaryWords + i] * _beta[i];
-		//sum = fmaf(_dictionaryD[idx * dictionaryWords + i], _beta[i], sum);
+		//sum += _dictionaryD[idx * dictionaryWords + i] * _beta[i];
+		sum = fmaf(_dictionaryD[idx * dictionaryWords + i], _beta[i], sum);
 	}
 	_intermD[idx] = sum - _signalD[idx];
 }
@@ -84,8 +84,8 @@ __global__ void CalculateNewAlphaStep(size_t dictionaryWords, size_t signalSize)
 	float sum = 0.0f;
 	for (size_t i = 0; i < signalSize; i++)
 	{
-		sum += _dictionaryInverseD[idx * signalSize + i] * _intermD[i];
-		//sum = fmaf(_dictionaryInverseD[idx * signalSize + i], _intermD[i], sum);
+		//sum += _dictionaryInverseD[idx * signalSize + i] * _intermD[i];
+		sum = fmaf(_dictionaryInverseD[idx * signalSize + i], _intermD[i], sum);
 	}
 	float newAlpha = _beta[idx] - sum;
 	_alphaD[idx] = abs(newAlpha) >= 1e-4f ? newAlpha : 0.0f;
@@ -157,60 +157,50 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 	delete[] _intermD;
 }
 
-DeviceLiMapSv2::DeviceLiMapSv2(std::vector<float>& solution, std::vector<float>& signal, std::vector<float>& D, std::vector<float>& DINV)
-	:_signalSize(signal.size()), _dictionaryWords(solution.size()),
-	// To avoid C++ vector copies, let's just store the vector references for our input data. This may be dangerous since the class MUST have the same (or shorted)
-	// scope of our data, but for our purposes should be ok
-	_hostSolution(solution), _hostSignal(signal), _hostDictionary(D), _hostDictionaryInverse(DINV)
+DeviceLiMapSv2::DeviceLiMapSv2(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize)
+	: BaseLiMapS(solution, signal, D, DINV, dictionaryWords, signalSize)
 {
 	_alphaH.resize(_dictionaryWords);
 
-	_solution = make_cuda<float>(solution.size());
-	_signal = make_cuda<float>(signal.size());
-	_dictionary = make_cuda<float>(D.size());
-	_dictionaryInverse = make_cuda<float>(DINV.size());
+	// We create the cuda pointers here and then we copy the pointers values to the device symbols. In this way
+	// memory disposal should be automatically handled by the class
+	_solutionPtr = make_cuda<float>(dictionaryWords);
+	_signalPtr = make_cuda<float>(signalSize);
+	_dictionaryPtr = make_cuda<float>(dictionaryWords * signalSize);
+	_dictionaryInversePtr = make_cuda<float>(dictionaryWords * signalSize);
+	_alphaPtr = make_cuda<float>(dictionaryWords);
+	_alphaOldPtr = make_cuda<float>(dictionaryWords);
 
-	_alpha = make_cuda<float>(solution.size());
-	_alphaOld = make_cuda<float>(solution.size());
-
-	// We copy the 
-	float* dummyPtr = _solution.get();
+	float* dummyPtr = _solutionPtr.get();
 	CUDA_CHECK(cudaMemcpyToSymbol(_solutionD, &dummyPtr, sizeof(void*)));
 
-	dummyPtr = _signal.get();
+	dummyPtr = _signalPtr.get();
 	CUDA_CHECK(cudaMemcpyToSymbol(_signalD, &dummyPtr, sizeof(void*)));
 
-	dummyPtr = _dictionary.get();
+	dummyPtr = _dictionaryPtr.get();
 	CUDA_CHECK(cudaMemcpyToSymbol(_dictionaryD, &dummyPtr, sizeof(void*)));
 
-	dummyPtr = _dictionaryInverse.get();
+	dummyPtr = _dictionaryInversePtr.get();
 	CUDA_CHECK(cudaMemcpyToSymbol(_dictionaryInverseD, &dummyPtr, sizeof(void*)));
 
-	dummyPtr = _alpha.get();
+	dummyPtr = _alphaPtr.get();
 	CUDA_CHECK(cudaMemcpyToSymbol(_alphaD, &dummyPtr, sizeof(void*)));
 
-	dummyPtr = _alphaOld.get();
+	dummyPtr = _alphaOldPtr.get();
 	CUDA_CHECK(cudaMemcpyToSymbol(_alphaOldD, &dummyPtr, sizeof(void*)));
 }
 
-DeviceLiMapSv2::~DeviceLiMapSv2()
-{
-
-}
 
 void DeviceLiMapSv2::Execute(int iterations)
 {
-	CUDA_CHECK(cudaMemcpy(_signal.get(), _hostSignal.data(), sizeof(float) * _signalSize, cudaMemcpyHostToDevice));
-	CUDA_CHECK(cudaMemcpy(_dictionaryInverse.get(), _hostDictionaryInverse.data(), sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
-	CUDA_CHECK(cudaMemcpy(_dictionary.get(), _hostDictionary.data(), sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpyAsync(_signalPtr.get(), _signalHost, sizeof(float) * _signalSize, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpyAsync(_dictionaryInversePtr.get(), _dictionaryInverseHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpyAsync(_dictionaryPtr.get(), _dictionaryHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 
-	dim3 blocks(32);
+	dim3 blocks(128);
 	dim3 gridSize((_dictionaryWords + blocks.x - 1) / blocks.x);
-
-	//LiMapS << < gridSize, blocks >> > (_dictionaryWords, _signalSize);
 	LiMapS << < 1, 1 >> > (_dictionaryWords, _signalSize);
-	CUDA_CHECK(cudaDeviceSynchronize());
-
-	CUDA_CHECK(cudaMemcpy(_alphaH.data(), _alpha.get(), sizeof(float) * _dictionaryWords, cudaMemcpyDeviceToHost));
+	
+	CUDA_CHECK(cudaMemcpyAsync(_alphaH.data(), _alphaPtr.get(), sizeof(float) * _dictionaryWords, cudaMemcpyDeviceToHost));
 	CUDA_CHECK(cudaDeviceSynchronize());
 }

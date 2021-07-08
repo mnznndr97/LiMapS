@@ -2,14 +2,12 @@
 #include "matrices.hpp"
 #include "vectors.hpp"
 
-HostLiMapS::HostLiMapS(std::vector<float>& solution, std::vector<float>& signal, std::vector<float>& D, std::vector<float>& DINV)
-// To avoid C++ vector copies, let's just store the vector references for our input data. This may be dangerous since the class MUST have the same (or shorted)
-// scope of our data, but for our purposes should be ok
-	: _solution(solution), _signal(signal), _dictionary(D), _dictionaryInverse(DINV)
+HostLiMapS::HostLiMapS(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize)
+	: BaseLiMapS(solution, signal, D, DINV, dictionaryWords, signalSize)
 {
 	// Let's pre-allocate the alpha and the old alpha space
-	_alpha.resize(solution.size());
-	_oldAlpha.resize(solution.size());
+	_alpha.resize(dictionaryWords);
+	_oldAlpha.resize(dictionaryWords);
 }
 
 void HostLiMapS::GetBeta(float* beta, float lambda) {
@@ -47,14 +45,14 @@ void HostLiMapS::GetBeta(float* beta, float lambda) {
 void HostLiMapS::Execute(int iterations)
 {
 	// The first thing we need to do is to calculate the starting alpha
-	Mat2VecProduct(_dictionaryInverse.data(), _solution.size(), _signal.size(), _signal.data(), _alpha.data());
+	Mat2VecProduct(_dictionaryInverseHost, _dictionaryWords, _signalSize, _signalHost, _alpha.data());
 
-	float signalNorm = GetEuclideanNorm(_signal);
+	float signalNorm = GetEuclideanNorm(_signalHost, _signalSize);
 	float lambda = 1.0f / signalNorm;
 
 	// We need two temporary arrays to do out job
 	std::vector<float> beta(_alpha.size());
-	std::vector<float> interm(_signal.size());
+	std::vector<float> interm(_signalSize);
 
 	// Let's start with our loop
 	int iteration = 0;
@@ -66,10 +64,10 @@ void HostLiMapS::Execute(int iterations)
 		// beta = alpha.*(1 - exp(-lambda.*abs(alpha)));
 		GetBeta(beta.data(), lambda);
 
-		Mat2VecProduct(_dictionary.data(), _signal.size(), _solution.size(), beta.data(), interm.data());
-		SubVec(interm, _signal, interm);
+		Mat2VecProduct(_dictionaryHost, _signalSize, _dictionaryWords, beta.data(), interm.data());
+		SubVec(interm.data(), _signalHost, interm.data(), _signalSize);
 
-		Mat2VecProduct(_dictionaryInverse.data(), _solution.size(), _signal.size(), interm.data(), _alpha.data());
+		Mat2VecProduct(_dictionaryInverseHost, _dictionaryWords, _signalSize, interm.data(), _alpha.data());
 		SubVec(beta, _alpha, _alpha);
 
 		ThresholdVec(_alpha, _alphaElementTh);
