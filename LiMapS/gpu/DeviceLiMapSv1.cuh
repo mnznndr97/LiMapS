@@ -7,8 +7,8 @@
 class DeviceLiMapSv1
 {
 private:
-	const int _signalSize;
-	const int _dictionaryWords;
+	const size_t _signalSize;
+	const size_t _dictionaryWords;
 
 	std::vector<float>& _hostSolution;
 	std::vector<float>& _hostSignal;

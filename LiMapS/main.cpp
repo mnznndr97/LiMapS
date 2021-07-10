@@ -67,8 +67,8 @@ int main(int argn, char** argc)
 
 	std::cout << " *** LiMapS Implementation ***" << std::endl;
 
-	const int signalSize = 2000;
-	const int dictionaryWords = 8000;
+	const int signalSize = 200;
+	const int dictionaryWords = 800;
 
 	// We may use some async CUDA memories operation so better to declare our pointer as non-paginable memory
 	float* actualSolution;
@@ -81,14 +81,14 @@ int main(int argn, char** argc)
 	CUDA_CHECK(cudaMallocHost(&dictionary, sizeof(float) * dictionaryWords * signalSize));
 	CUDA_CHECK(cudaMallocHost(&dictionaryInverse, sizeof(float) * dictionaryWords * signalSize));
 
-	// Let' s read our data from a file for the moment and assert that evertything has the right dimension
-	ReadColumnVector("data\\2\\in_true_alpha.txt", actualSolution);
-	ReadColumnVector("data\\2\\in_signal.txt", signal);
-	ReadMatrix("data\\2\\in_D.txt", dictionary, signalSize, dictionaryWords);
-	ReadMatrix("data\\2\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
+	std::cout << "Reading data ..." << std::endl;
 
-	assert(actualSolution.size() == dictionaryWords);
-	assert(signal.size() == signalSize);
+	// Let' s read our data from a file for the moment and assert that evertything has the right dimension
+	ReadColumnVector("data\\1\\in_true_alpha.txt", actualSolution);
+	ReadColumnVector("data\\1\\in_signal.txt", signal);
+	ReadMatrix("data\\1\\in_D.txt", dictionary, signalSize, dictionaryWords);
+	ReadMatrix("data\\1\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
+
 
 	std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
 	std::cout << "Signal size: " << signalSize << std::endl << std::endl;
@@ -96,7 +96,6 @@ int main(int argn, char** argc)
 	StopWatch sw;
 
 	// Stopping criteria declaration
-	const float epsilon = 1e-5;
 	const int maxIterations = 1000;
 
 	std::cout << "Starting CPU execution ..." << std::endl;
@@ -138,9 +137,14 @@ int main(int argn, char** argc)
 		std::cout.precision(std::numeric_limits<float>::max_digits10);
 		for (size_t i = 0; i < dictionaryWords; i++)
 		{
-			if (hostResult[i] != kernelResult[i])
+			/*if (hostResult[i] != kernelResult[i])
 			{
 				std::cout << "Alpha[" << i << "] mismatch: " << hostResult[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
+			}*/
+
+			if (actualSolution[i] != kernelResult[i])
+			{
+				std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
 			}
 		}
 	}

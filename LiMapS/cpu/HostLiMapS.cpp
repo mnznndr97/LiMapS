@@ -36,7 +36,7 @@ void HostLiMapS::GetBeta(float* beta, float lambda) {
 		float alphaD = _alpha[i];
 
 		float data = -lambda * fabs(alphaD);
-		data = 1.0f - exp(data);
+		data = 1.0f - expf(data);
 
 		beta[i] = alphaD * data;
 	}

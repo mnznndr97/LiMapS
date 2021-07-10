@@ -23,6 +23,23 @@ __device__ float* _intermD;
 __device__ float _signalSquareSum;
 __device__ float _alphaDiffSquareSum;
 
+template<int unrollFactor>
+__global__ void FillZero(float* vector, size_t size) {
+	cg::grid_group grid = cg::this_grid();
+	if (grid.thread_rank() >= size) {
+		// Our thread is out of range
+		return;
+	}
+
+#pragma unroll
+	for (size_t i = 0; i < unrollFactor; i++)
+	{
+		size_t vOffset = grid.thread_rank() + i * blockDim.x;
+		vector[vOffset] = 0.0f;
+	}
+}
+
+
 __global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
 	cg::grid_group grid = cg::this_grid();
 	if (grid.thread_rank() >= dictionaryWords) {
@@ -33,13 +50,68 @@ __global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
 	float sum = 0.0f;
 	for (size_t i = 0; i < signalSize; i++)
 	{
-		//sum += _dictionaryInverseD[grid.thread_rank() * signalSize + i] * _signalD[i];
-		sum = fmaf(_dictionaryInverseD[grid.thread_rank() * signalSize + i], _signalD[i], sum);
+		sum += _dictionaryInverseD[grid.thread_rank() * signalSize + i] * _signalD[i];
+		//sum = fmaf(_dictionaryInverseD[grid.thread_rank() * signalSize + i], _signalD[i], sum);
 	}
+
 	// AlphaOld and Alpha should be aligned at the first iteration, so let's write them directly here
 	// This avoids us a vector copy later
 	_alphaD[grid.thread_rank()] = sum;
 	_alphaOldD[grid.thread_rank()] = sum;
+}
+
+template<int unrollFactor>
+__global__ void GetAlpha2(size_t dictionaryWords, size_t signalSize) {
+	extern __shared__ float blockParSums[];
+
+	size_t idx = blockDim.x * blockIdx.x + threadIdx.x;
+	size_t idy = blockDim.y * blockIdx.y + threadIdx.y;
+
+	if (idy >= dictionaryWords) return;
+
+	float data = 0.0f;
+#pragma unroll
+	for (size_t i = 0; i < unrollFactor; i++)
+	{
+		size_t vOffset = idx + i * blockDim.x;
+		float dicInverse = vOffset < signalSize ? _dictionaryInverseD[idy * signalSize + vOffset] : 0.0f;
+		float signal = vOffset < signalSize ? _signalD[vOffset] : 0.0f;
+
+		data += (dicInverse * signal);
+	}
+
+
+	int warpLane = threadIdx.x % warpSize;
+	int warpIndex = threadIdx.x / warpSize;
+
+	// We sum the data at warp level and we store the value of the first thread (at warp level) in the 
+	// shared memory
+	float warpSum = WarpReduce(data);
+	if (warpLane == 0) {
+		// NB: if we are in the "out-of-bounds" region of the data, sum shound be zero 
+		// This is necessary to have a legitimate value in the shared mem that later will 
+		// be used in another reduce pass
+		blockParSums[warpIndex] = warpSum;
+	}
+
+	if (idx >= signalSize) return;
+
+	__syncthreads();
+
+	// After the sync point, we can use the first threads (up to shared mem size), to load and sum toghether the 
+	// values at "block level", 
+
+	float warpParSum = (threadIdx.x < (blockDim.x / warpSize)) ? blockParSums[threadIdx.x] : 0.0f;
+
+	// Facciamo lavorare solo il primo warp
+	float blockSum = warpIndex == 0 ? WarpReduce(warpParSum) : 0.0f;
+
+	// AlphaOld and Alpha should be aligned at the first iteration, so let's write them directly here
+	// This avoids us a vector copy later
+	if (threadIdx.x == 0) {
+		atomicAdd(&_alphaD[idy], blockSum);
+		atomicAdd(&_alphaOldD[idy], blockSum);
+	}
 }
 
 __global__ void CalculateBetaStep(float lambda, size_t dictionaryWords, size_t signalSize) {
@@ -66,8 +138,8 @@ __global__ void CalculateIntermStep(size_t dictionaryWords, size_t signalSize) {
 	float sum = 0.0f;
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
-		//sum += _dictionaryD[idx * dictionaryWords + i] * _beta[i];
-		sum = fmaf(_dictionaryD[idx * dictionaryWords + i], _beta[i], sum);
+		sum += _dictionaryD[idx * dictionaryWords + i] * _beta[i];
+		//sum = fmaf(_dictionaryD[idx * dictionaryWords + i], _beta[i], sum);
 	}
 	_intermD[idx] = sum - _signalD[idx];
 }
@@ -84,11 +156,11 @@ __global__ void CalculateNewAlphaStep(size_t dictionaryWords, size_t signalSize)
 	float sum = 0.0f;
 	for (size_t i = 0; i < signalSize; i++)
 	{
-		//sum += _dictionaryInverseD[idx * signalSize + i] * _intermD[i];
-		sum = fmaf(_dictionaryInverseD[idx * signalSize + i], _intermD[i], sum);
+		sum += _dictionaryInverseD[idx * signalSize + i] * _intermD[i];
+		//sum = fmaf(_dictionaryInverseD[idx * signalSize + i], _intermD[i], sum);
 	}
 	float newAlpha = _beta[idx] - sum;
-	_alphaD[idx] = abs(newAlpha) >= 1e-4f ? newAlpha : 0.0f;
+	_alphaD[idx] = fabs(newAlpha) >= 1e-4f ? newAlpha : 0.0f;
 }
 
 
@@ -104,16 +176,28 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 	dim3 blocks(256);
 	SquareSumKrnlUnroll<8> << <GetGridSize(blocks, signalSize, 8), blocks, blocks.x / warpSize >> > (_signalD, signalSize, &_signalSquareSum);
 	CUDA_CHECKD(cudaDeviceSynchronize());
+
 	assert(_signalSquareSum >= 0.0f);
 
-	float lambda = 1.0f / sqrt(_signalSquareSum);
+	float t = sqrtf(_signalSquareSum);
+	float lambda = 1.0f / t;
 
 	_beta = new float[dictionaryWords];
 	_intermD = new float[signalSize];
 
+	blocks.x = 32;
 	// 2) The second step of the algorithm is to prepare the starting alpha vector so also here we 
 	// Launch the kernel calculation and we synchronize the device
-	GetAlpha << <GetGridSize(blocks, dictionaryWords), blocks >> > (dictionaryWords, signalSize);
+
+	// Is it  necessary??
+	//FillZero<1> << <gridSize, blocks >> > (_alphaD, dictionaryWords);
+	//FillZero<1> << <gridSize, blocks >> > (_alphaOldD, dictionaryWords);
+
+	dim3 gridSize = GetGridSize(blocks, signalSize, 8);
+	gridSize.y = dictionaryWords;
+	int sharedMemSize = blocks.x / warpSize;
+	GetAlpha2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
+	CUDA_CHECKD(cudaPeekAtLastError());
 	CUDA_CHECKD(cudaDeviceSynchronize());
 
 	int i = 0;
@@ -130,7 +214,8 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 		// In this way, the work is executed with all data dependencies respected
 
 		// 3.1) We need to compute the beta vector for this iterarion
-		blocks.x = 32;
+		blocks.x = 128;
+		blocks.y = 1;
 		CalculateBetaStep << <GetGridSize(blocks, dictionaryWords), blocks >> > (lambda, dictionaryWords, signalSize);
 
 		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
@@ -146,7 +231,7 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 		SquareDiffSumKrnlUnroll<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaD, _alphaOldD, dictionaryWords, &_alphaDiffSquareSum);
 		CUDA_CHECKD(cudaDeviceSynchronize());
 
-		float norm = sqrt(_alphaDiffSquareSum);
+		float norm = sqrtf(_alphaDiffSquareSum);
 		if (norm < 1e-5f) {
 			break;
 		}
@@ -197,10 +282,8 @@ void DeviceLiMapSv2::Execute(int iterations)
 	CUDA_CHECK(cudaMemcpyAsync(_dictionaryInversePtr.get(), _dictionaryInverseHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpyAsync(_dictionaryPtr.get(), _dictionaryHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 
-	dim3 blocks(128);
-	dim3 gridSize((_dictionaryWords + blocks.x - 1) / blocks.x);
 	LiMapS << < 1, 1 >> > (_dictionaryWords, _signalSize);
-	
+
 	CUDA_CHECK(cudaMemcpyAsync(_alphaH.data(), _alphaPtr.get(), sizeof(float) * _dictionaryWords, cudaMemcpyDeviceToHost));
 	CUDA_CHECK(cudaDeviceSynchronize());
 }

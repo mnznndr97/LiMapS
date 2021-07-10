@@ -2,8 +2,6 @@
 
 #include <assert.h>
 #include <algorithm>
-#include <span>
-
 #include "vectors.hpp"
 
 inline void Mat2VecProduct(const float* matrix, size_t rows, size_t cols, const float* colVector, float* destination) {

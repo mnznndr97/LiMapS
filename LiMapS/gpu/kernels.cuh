@@ -5,8 +5,7 @@
 #define FULL_MASK 0xffffffff
 
 __inline__ __device__ float GetBeta(float lambda, float data) {
-	float alphaValue = data;
-	return alphaValue * (1.0f - exp(-lambda * abs(alphaValue)));
+	return data * (1.0f - expf(-lambda * fabs(data)));
 }
 
 __global__ void GetBetaKrnl(float lambda, const float* data, float* beta, size_t size);
@@ -26,6 +25,26 @@ __inline__ __host__ __device__ dim3 GetGridSize(const dim3& blockSize, size_t da
 
 	assert((gridSize.x * unrollingFactor * blockSize.x) >= dataSize);
 	assert(gridSize.y == 1);
+	assert(gridSize.z == 1);
+	return gridSize;
+}
+
+__inline__ __host__ __device__ dim3 GetGridSize2(const dim3& blockSize, size_t dataSize, int unrollingFactor, size_t dataSize2, int unrollingFactor2) {
+	assert(dataSize > 0);
+	assert(unrollingFactor > 0);
+
+	// NB: We just set the x dimension here, but for the y and z should be the same
+	// In our application only one dimension is needed
+
+	// We first fix the grid size using the block dimension
+	dim3 gridSize((dataSize + blockSize.x - 1) / blockSize.x, (dataSize2 + blockSize.y - 1) / blockSize.y);
+
+	// Then we account also for unrolling factor, since our data length might not be a power of two
+	gridSize.x = (gridSize.x + unrollingFactor - 1) / unrollingFactor;
+	gridSize.y = (gridSize.y + unrollingFactor2 - 1) / unrollingFactor2;
+
+	assert((gridSize.x * unrollingFactor * blockSize.x) >= dataSize);
+	assert((gridSize.y * unrollingFactor2 * blockSize.y) >= dataSize2);
 	assert(gridSize.z == 1);
 	return gridSize;
 }
@@ -170,7 +189,7 @@ __global__ void SquareDiffSumKrnlUnroll(const float* vec1, const float* vec2, si
 	for (size_t i = 0; i < unrollFactor; i++)
 	{
 		size_t vOffset = idx + i * blockDim.x;
-		float d = (vOffset) < size ? vec1[vOffset] - vec2[vOffset] : 0.0f;
+		float d = vOffset < size ? vec1[vOffset] - vec2[vOffset] : 0.0f;
 		data += (d * d);
 	}
 
