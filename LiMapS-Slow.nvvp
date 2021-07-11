@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<session version="2" name="LiMapS-Slow.nvvp" hscale="3.2E-5" normalize="false">
+<session version="2" name="LiMapS-Slow.nvvp" hscale="6.4E-5" normalize="false">
 <timelineoptions enabletimerange="false" start="-1" end="-1" numsegmentsuvm="100" uvmisegmentenabled="true"/>
 <executable file="C:\Dati\Programmazione\UNIMI\LiMapS\x64\Release\LiMapS.exe" timestamp="1625927295785" cwd="C:\Dati\Programmazione\UNIMI\LiMapS\LiMapS" profileonstart="true" concurrentkernels="true" apitrace="true" environmentprofiling="false" uvmprofiling="true" cpuprofiling="false" allocationsTracking="false" openaccprofiling="true" openmpprofiling="false" threadtracking="false" devicebuffersize="3" cdpbuffersize="8"><envs></envs><multiProcess type="0" rumMPS="false"/></executable>
 <expert><columnprops><column kind="NAME" width="531"/></columnprops>

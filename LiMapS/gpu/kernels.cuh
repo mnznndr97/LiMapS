@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "cuda_shared.h"
+#include <nvfunctional>
 
 #define FULL_MASK 0xffffffff
 
@@ -71,13 +72,48 @@ __inline__ __device__ float WarpReduce(float data) {
 	return data;
 }
 
+template <typename... Arguments>
+__device__ void KernelReduce(float data, size_t size, nvstd::function<void(Arguments..., float)> sumCallback, Arguments... args) {
+	extern __shared__ float blockParSums[];
+
+	int warpLane = threadIdx.x % warpSize;
+	int warpIndex = threadIdx.x / warpSize;
+	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	// We sum the data at warp level and we store the value of the first thread (at warp level) in the 
+	// shared memory
+	float warpSum = WarpReduce(data);
+	if (warpLane == 0) {
+		// NB: if we are in the "out-of-bounds" region of the data, sum shound be zero 
+		// This is necessary to have a legitimate value in the shared mem that later will 
+		// be used in another reduce pass
+		blockParSums[warpIndex] = warpSum;
+	}
+
+	if (idx >= size) return;
+
+	__syncthreads();
+
+	// After the sync point, we can use the first threads (up to shared mem size), to load and sum toghether the 
+	// values at "block level", 
+
+	float warpParSum = (threadIdx.x < (blockDim.x / warpSize)) ? blockParSums[threadIdx.x] : 0.0f;
+
+	// Facciamo lavorare solo il primo warp
+	float blockSum = warpIndex == 0 ? WarpReduce(warpParSum) : 0.0f;
+
+	// AlphaOld and Alpha should be aligned at the first iteration, so let's write them directly here
+	// This avoids us a vector copy later
+	if (threadIdx.x == 0) {
+		sumCallback(args..., blockSum);
+	}
+}
+
+
 __global__ void SquareSumKrnl(const float* vec, size_t size, float* result);
 
 template <int unrollFactor>
 __global__ void SquareSumKrnlUnroll(const float* vec, size_t size, float* result) {
-
-	extern __shared__ float blockParSums[];
-
 	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 
 	// We calculate the squared value. We maintain the entire warp active but if we are out of bounds we
@@ -91,43 +127,13 @@ __global__ void SquareSumKrnlUnroll(const float* vec, size_t size, float* result
 		data += (d * d);
 	}
 
-	int warpLane = threadIdx.x % warpSize;
-	int warpIndex = threadIdx.x / warpSize;
-
-	// We sum the data at warp level and we store the value of the first thread (at warp level) in the 
-	// shared memory
-	float warpSum = WarpReduce(data);
-	if (warpLane == 0) {
-		// NB: if we are in the "out-of-bounds" region of the data, sum shound be zero 
-		// This is necessary to have a legitimate value in the shared mem that later will 
-		// be used in another reduce pass
-		assert(warpSum >= 0.0f);
-		blockParSums[warpIndex] = warpSum;
-	}
-
-	if (idx >= size) return;
-
-	__syncthreads();
-
-	// After the sync point, we can use the first threads (up to shared mem size), to load and sum toghether the 
-	// values at "block level", 
-
-	float warpParSum = (threadIdx.x < (blockDim.x / warpSize)) ? blockParSums[threadIdx.x] : 0.0f;
-	assert(warpParSum >= 0.0f);
-
-	// Facciamo lavorare solo il primo warp
-	float blockSum = warpIndex == 0 ? WarpReduce(warpParSum) : 0.0f;
-	assert(blockSum >= 0.0f);
-
-	if (threadIdx.x == 0) {
-		atomicAdd(result, blockSum);
-	}
+	KernelReduce<float*>(data, size, [](float* result, float data) {
+		atomicAdd(result, data);
+		}, result);
 }
 
 template <int unrollFactor>
 __global__ void SquareSumKrnlUnrollLdg(const float* vec, size_t size, float* result) {
-	extern __shared__ float blockParSums[];
-
 	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 
 	// We calculate the squared value. We maintain the entire warp active but if we are out of bounds we
@@ -141,44 +147,13 @@ __global__ void SquareSumKrnlUnrollLdg(const float* vec, size_t size, float* res
 		data += (d * d);
 	}
 
-	int warpLane = threadIdx.x % warpSize;
-	int warpIndex = threadIdx.x / warpSize;
-
-	// We sum the data at warp level and we store the value of the first thread (at warp level) in the 
-	// shared memory
-	float warpSum = WarpReduce(data);
-	if (warpLane == 0) {
-		// NB: if we are in the "out-of-bounds" region of the data, sum shound be zero 
-		// This is necessary to have a legitimate value in the shared mem that later will 
-		// be used in another reduce pass
-		assert(warpSum >= 0.0f);
-		blockParSums[warpIndex] = warpSum;
-	}
-
-	//if (idx >= size) return;
-
-	__syncthreads();
-
-	// After the sync point, we can use the first threads (up to shared mem size), to load and sum toghether the 
-	// values at "block level", 
-
-	float warpParSum = (threadIdx.x < (blockDim.x / warpSize)) ? blockParSums[threadIdx.x] : 0.0f;
-	assert(warpParSum >= 0.0f);
-
-	// Facciamo lavorare solo il primo warp
-	float blockSum = warpIndex == 0 ? WarpReduce(warpParSum) : 0.0f;
-	assert(blockSum >= 0.0f);
-
-	if (threadIdx.x == 0) {
-		atomicAdd(result, blockSum);
-	}
+	KernelReduce<float*>(data, size, [](float* result, float data) {
+		atomicAdd(result, data);
+		}, result);
 }
 
 template <int unrollFactor>
 __global__ void SquareDiffSumKrnlUnroll(const float* vec1, const float* vec2, size_t size, float* result) {
-
-	extern __shared__ float blockParSums[];
-
 	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 
 	// We calculate the squared value. We maintain the entire warp active but if we are out of bounds we
@@ -193,35 +168,7 @@ __global__ void SquareDiffSumKrnlUnroll(const float* vec1, const float* vec2, si
 		data += (d * d);
 	}
 
-	int warpLane = threadIdx.x % warpSize;
-	int warpIndex = threadIdx.x / warpSize;
-
-	// We sum the data at warp level and we store the value of the first thread (at warp level) in the 
-	// shared memory
-	float warpSum = WarpReduce(data);
-	if (warpLane == 0) {
-		// NB: if we are in the "out-of-bounds" region of the data, sum shound be zero 
-		// This is necessary to have a legitimate value in the shared mem that later will 
-		// be used in another reduce pass
-		assert(warpSum >= 0.0f);
-		blockParSums[warpIndex] = warpSum;
-	}
-
-	if (idx >= size) return;
-
-	__syncthreads();
-
-	// After the sync point, we can use the first threads (up to shared mem size), to load and sum toghether the 
-	// values at "block level", 
-
-	float warpParSum = (threadIdx.x < (blockDim.x / warpSize)) ? blockParSums[threadIdx.x] : 0.0f;
-	assert(warpParSum >= 0.0f);
-
-	// Facciamo lavorare solo il primo warp
-	float blockSum = warpIndex == 0 ? WarpReduce(warpParSum) : 0.0f;
-	assert(blockSum >= 0.0f);
-
-	if (threadIdx.x == 0) {
-		atomicAdd(result, blockSum);
-	}
+	KernelReduce<float*>(data, size, [](float* result, float data) {
+		atomicAdd(result, data);
+		}, result);
 }

@@ -1,4 +1,4 @@
-﻿#include "DeviceLiMapSv2.cuh"
+﻿#include "DeviceLiMapSv3.cuh"
 
 #include "cuda_shared.h"
 #include <cooperative_groups.h>
@@ -63,27 +63,6 @@ __global__ void ThresholdAlpha(float* vector, size_t size) {
 	}
 }
 
-
-__global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
-	cg::grid_group grid = cg::this_grid();
-	if (grid.thread_rank() >= dictionaryWords) {
-		// Our thread is out of range
-		return;
-	}
-
-	float sum = 0.0f;
-	for (size_t i = 0; i < signalSize; i++)
-	{
-		sum += _dictionaryInverseD[grid.thread_rank() * signalSize + i] * _signalD[i];
-		//sum = fmaf(_dictionaryInverseD[grid.thread_rank() * signalSize + i], _signalD[i], sum);
-	}
-
-	// AlphaOld and Alpha should be aligned at the first iteration, so let's write them directly here
-	// This avoids us a vector copy later
-	_alphaD[grid.thread_rank()] = sum;
-	_alphaOldD[grid.thread_rank()] = sum;
-}
-
 template<int unrollFactor>
 __global__ void GetAlpha2(size_t dictionaryWords, size_t signalSize) {
 	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
@@ -120,24 +99,6 @@ __global__ void CalculateBetaStep(float lambda, size_t dictionaryWords, size_t s
 	_beta[index] = GetBeta(lambda, _alphaD[index]);
 }
 
-__global__ void CalculateIntermStep(size_t dictionaryWords, size_t signalSize) {
-	cg::grid_group grid = cg::this_grid();
-
-	unsigned long long idx = grid.thread_rank();
-	if (idx >= signalSize) {
-		// Our thread is out of range
-		return;
-	}
-
-	float sum = 0.0f;
-	for (size_t i = 0; i < dictionaryWords; i++)
-	{
-		sum += _dictionaryD[idx * dictionaryWords + i] * _beta[i];
-		//sum = fmaf(_dictionaryD[idx * dictionaryWords + i], _beta[i], sum);
-	}
-	_intermD[idx] = sum - _signalD[idx];
-}
-
 template<int unrollFactor>
 __global__ void CalculateIntermStep2(size_t dictionaryWords, size_t signalSize) {
 
@@ -164,25 +125,6 @@ __global__ void CalculateIntermStep2(size_t dictionaryWords, size_t signalSize) 
 }
 
 
-__global__ void CalculateNewAlphaStep(size_t dictionaryWords, size_t signalSize) {
-	cg::grid_group grid = cg::this_grid();
-
-	unsigned long long idx = grid.thread_rank();
-	if (idx >= dictionaryWords) {
-		// Our thread is out of range
-		return;
-	}
-
-	float sum = 0.0f;
-	for (size_t i = 0; i < signalSize; i++)
-	{
-		sum += _dictionaryInverseD[idx * signalSize + i] * _intermD[i];
-		//sum = fmaf(_dictionaryInverseD[idx * signalSize + i], _intermD[i], sum);
-	}
-	float newAlpha = _beta[idx] - sum;
-	_alphaD[idx] = fabs(newAlpha) >= 1e-4f ? newAlpha : 0.0f;
-}
-
 template<int unrollFactor>
 __global__ void CalculateNewAlphaStep2(size_t dictionaryWords, size_t signalSize) {
 	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
@@ -204,6 +146,7 @@ __global__ void CalculateNewAlphaStep2(size_t dictionaryWords, size_t signalSize
 	KernelReduce<size_t>(data, signalSize, [](size_t index, float sum) {
 		atomicAdd(&_alphaD[index], -sum);
 		}, idy);
+
 }
 
 
@@ -276,10 +219,10 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 
 		// 3.3) We compute the new alpha with the thresholding at the end
 		blocks.x = 64;
-		gridSize = GetGridSize(blocks, signalSize, 8);
+		gridSize = GetGridSize(blocks, dictionaryWords, 8);
 		gridSize.y = signalSize;
 		sharedMemSize = blocks.x / warpSize;
-		CalculateNewAlphaStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
+		CalculateNewAlphaStep2<8> << <GetGridSize(blocks, dictionaryWords), blocks >> > (dictionaryWords, signalSize);
 
 		blocks.x = 128;
 		ThresholdAlpha<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaD, dictionaryWords);
@@ -302,7 +245,7 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 	delete[] _intermD;
 }
 
-DeviceLiMapSv2::DeviceLiMapSv2(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize)
+DeviceLiMapSv3::DeviceLiMapSv3(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize)
 	: BaseLiMapS(solution, signal, D, DINV, dictionaryWords, signalSize)
 {
 	_alphaH.resize(_dictionaryWords);
@@ -336,7 +279,7 @@ DeviceLiMapSv2::DeviceLiMapSv2(const float* solution, const float* signal, const
 }
 
 
-void DeviceLiMapSv2::Execute(int iterations)
+void DeviceLiMapSv3::Execute(int iterations)
 {
 	CUDA_CHECK(cudaMemcpyAsync(_signalPtr.get(), _signalHost, sizeof(float) * _signalSize, cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpyAsync(_dictionaryInversePtr.get(), _dictionaryInverseHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
