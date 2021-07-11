@@ -10,18 +10,18 @@
 
 
 
-__device__ float* _solutionD;
-__device__ float* _signalD;
-__device__ float* _dictionaryD;
-__device__ float* _dictionaryInverseD;
-__device__ float* _alphaD;
-__device__ float* _alphaOldD;
+static __device__ float* _solutionD;
+static __device__ float* _signalD;
+static __device__ float* _dictionaryD;
+static __device__ float* _dictionaryInverseD;
+static __device__ float* _alphaD;
+static __device__ float* _alphaOldD;
 
-__device__ float* _beta;
-__device__ float* _intermD;
+static __device__ float* _beta;
+static __device__ float* _intermD;
 
-__device__ float _signalSquareSum;
-__device__ float _alphaDiffSquareSum;
+static __device__ float _signalSquareSum;
+static __device__ float _alphaDiffSquareSum;
 
 template<int unrollFactor>
 __global__ void FillInterm(float* vector, size_t size) {
@@ -87,7 +87,7 @@ __global__ void GetAlpha2(size_t dictionaryWords, size_t signalSize) {
 		}, idy);
 }
 
-__global__ void CalculateBetaStep(float lambda, size_t dictionaryWords, size_t signalSize) {
+__global__ void CalculateBetaStep2(float lambda, size_t dictionaryWords, size_t signalSize) {
 	cg::grid_group grid = cg::this_grid();
 
 	unsigned long long index = grid.thread_rank();
@@ -98,6 +98,7 @@ __global__ void CalculateBetaStep(float lambda, size_t dictionaryWords, size_t s
 
 	_beta[index] = GetBeta(lambda, _alphaD[index]);
 }
+
 
 template<int unrollFactor>
 __global__ void CalculateIntermStep2(size_t dictionaryWords, size_t signalSize) {
@@ -146,11 +147,10 @@ __global__ void CalculateNewAlphaStep2(size_t dictionaryWords, size_t signalSize
 	KernelReduce<size_t>(data, signalSize, [](size_t index, float sum) {
 		atomicAdd(&_alphaD[index], -sum);
 		}, idy);
-
 }
 
 
-__global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
+__global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 	// Handle to thread block group
 	cg::grid_group grid = cg::this_grid();
 
@@ -201,7 +201,7 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 
 		// 3.1) We need to compute the beta vector for this iterarion
 		blocks.x = 128;
-		CalculateBetaStep << <GetGridSize(blocks, dictionaryWords), blocks >> > (lambda, dictionaryWords, signalSize);
+		CalculateBetaStep2 << <GetGridSize(blocks, dictionaryWords), blocks >> > (lambda, dictionaryWords, signalSize);
 
 		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
 		blocks.x = 64;
@@ -219,10 +219,10 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 
 		// 3.3) We compute the new alpha with the thresholding at the end
 		blocks.x = 64;
-		gridSize = GetGridSize(blocks, dictionaryWords, 8);
-		gridSize.y = signalSize;
+		gridSize = GetGridSize(blocks, signalSize, 8);
+		gridSize.y = dictionaryWords;
 		sharedMemSize = blocks.x / warpSize;
-		CalculateNewAlphaStep2<8> << <GetGridSize(blocks, dictionaryWords), blocks >> > (dictionaryWords, signalSize);
+		CalculateNewAlphaStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
 
 		blocks.x = 128;
 		ThresholdAlpha<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaD, dictionaryWords);
@@ -285,7 +285,7 @@ void DeviceLiMapSv3::Execute(int iterations)
 	CUDA_CHECK(cudaMemcpyAsync(_dictionaryInversePtr.get(), _dictionaryInverseHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpyAsync(_dictionaryPtr.get(), _dictionaryHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 
-	LiMapS << < 1, 1 >> > (_dictionaryWords, _signalSize);
+	LiMapS2 << < 1, 1 >> > (_dictionaryWords, _signalSize);
 
 	CUDA_CHECK(cudaMemcpyAsync(_alphaH.data(), _alphaPtr.get(), sizeof(float) * _dictionaryWords, cudaMemcpyDeviceToHost));
 	CUDA_CHECK(cudaDeviceSynchronize());

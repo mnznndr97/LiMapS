@@ -10,58 +10,18 @@
 
 
 
-__device__ float* _solutionD;
-__device__ float* _signalD;
-__device__ float* _dictionaryD;
-__device__ float* _dictionaryInverseD;
-__device__ float* _alphaD;
-__device__ float* _alphaOldD;
+static __device__ float* _solutionD;
+static __device__ float* _signalD;
+static __device__ float* _dictionaryD;
+static __device__ float* _dictionaryInverseD;
+static __device__ float* _alphaD;
+static __device__ float* _alphaOldD;
 
-__device__ float* _beta;
-__device__ float* _intermD;
+static __device__ float* _beta;
+static __device__ float* _intermD;
 
-__device__ float _signalSquareSum;
-__device__ float _alphaDiffSquareSum;
-
-template<int unrollFactor>
-__global__ void FillInterm(float* vector, size_t size) {
-	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		if (vOffset < size) vector[vOffset] = -_signalD[vOffset];
-	}
-}
-
-template<int unrollFactor>
-__global__ void FillAlpha(float* vector, size_t size) {
-	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		if (vOffset < size) vector[vOffset] = _beta[vOffset];
-	}
-}
-
-template<int unrollFactor>
-__global__ void ThresholdAlpha(float* vector, size_t size) {
-	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		if (vOffset < size) {
-			if (fabs(_alphaD[vOffset]) < 1e-4f)
-				_alphaD[vOffset] = 0.0f;
-		}
-
-	}
-}
+static __device__ float _signalSquareSum;
+static __device__ float _alphaDiffSquareSum;
 
 
 __global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
@@ -82,30 +42,6 @@ __global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
 	// This avoids us a vector copy later
 	_alphaD[grid.thread_rank()] = sum;
 	_alphaOldD[grid.thread_rank()] = sum;
-}
-
-template<int unrollFactor>
-__global__ void GetAlpha2(size_t dictionaryWords, size_t signalSize) {
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (idy >= dictionaryWords) return;
-
-	float data = 0.0f;
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		float dicInverse = vOffset < signalSize ? _dictionaryInverseD[idy * signalSize + vOffset] : 0.0f;
-		float signal = vOffset < signalSize ? _signalD[vOffset] : 0.0f;
-
-		data += (dicInverse * signal);
-	}
-
-	KernelReduce<size_t>(data, signalSize, [](size_t index, float sum) {
-		atomicAdd(&_alphaD[index], sum);
-		atomicAdd(&_alphaOldD[index], sum);
-		}, idy);
 }
 
 __global__ void CalculateBetaStep(float lambda, size_t dictionaryWords, size_t signalSize) {
@@ -138,30 +74,6 @@ __global__ void CalculateIntermStep(size_t dictionaryWords, size_t signalSize) {
 	_intermD[idx] = sum - _signalD[idx];
 }
 
-template<int unrollFactor>
-__global__ void CalculateIntermStep2(size_t dictionaryWords, size_t signalSize) {
-
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (idy >= signalSize) return;
-
-	float data = 0.0f;
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		float dic = vOffset < dictionaryWords ? _dictionaryD[idy * dictionaryWords + vOffset] : 0.0f;
-		float beta = vOffset < dictionaryWords ? _beta[vOffset] : 0.0f;
-
-		data += (dic * beta);
-		//data = fma(dic, beta, data);
-	}
-
-	KernelReduce<size_t>(data, dictionaryWords, [](size_t index, float sum) {
-		atomicAdd(&_intermD[index], sum);
-		}, idy);
-}
 
 
 __global__ void CalculateNewAlphaStep(size_t dictionaryWords, size_t signalSize) {
@@ -181,29 +93,6 @@ __global__ void CalculateNewAlphaStep(size_t dictionaryWords, size_t signalSize)
 	}
 	float newAlpha = _beta[idx] - sum;
 	_alphaD[idx] = fabs(newAlpha) >= 1e-4f ? newAlpha : 0.0f;
-}
-
-template<int unrollFactor>
-__global__ void CalculateNewAlphaStep2(size_t dictionaryWords, size_t signalSize) {
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (idy >= dictionaryWords) return;
-
-	float data = 0.0f;
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		float dicInv = vOffset < signalSize ? _dictionaryInverseD[idy * signalSize + vOffset] : 0.0f;
-		float interm = vOffset < signalSize ? _intermD[vOffset] : 0.0f;
-
-		data += (dicInv * interm);
-	}
-
-	KernelReduce<size_t>(data, signalSize, [](size_t index, float sum) {
-		atomicAdd(&_alphaD[index], -sum);
-		}, idy);
 }
 
 
@@ -232,15 +121,7 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 	// 2) The second step of the algorithm is to prepare the starting alpha vector so also here we 
 	// Launch the kernel calculation and we synchronize the device
 
-	// Is it  necessary??
-	//FillZero<1> << <gridSize, blocks >> > (_alphaD, dictionaryWords);
-	//FillZero<1> << <gridSize, blocks >> > (_alphaOldD, dictionaryWords);
-
-	dim3 gridSize = GetGridSize(blocks, signalSize, 8);
-	gridSize.y = dictionaryWords;
-	int sharedMemSize = blocks.x / warpSize;
-	GetAlpha2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
-	CUDA_CHECKD(cudaPeekAtLastError());
+	GetAlpha << <GetGridSize(blocks, dictionaryWords), blocks >> > (dictionaryWords, signalSize);
 	CUDA_CHECKD(cudaDeviceSynchronize());
 
 	int i = 0;
@@ -262,27 +143,11 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 
 		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
 		blocks.x = 64;
-		FillInterm<8> << <GetGridSize(blocks, signalSize, 8), blocks >> > (_intermD, signalSize);
-
-		blocks.x = 64;
-		gridSize = GetGridSize(blocks, dictionaryWords, 8);
-		gridSize.y = signalSize;
-		int sharedMemSize = blocks.x / warpSize;
-		CalculateIntermStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
-		CUDA_CHECKD(cudaPeekAtLastError());
-
-		blocks.x = 128;
-		FillAlpha<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaD, dictionaryWords);
+		CalculateIntermStep << <GetGridSize(blocks, signalSize), blocks >> > (dictionaryWords, signalSize);
 
 		// 3.3) We compute the new alpha with the thresholding at the end
 		blocks.x = 64;
-		gridSize = GetGridSize(blocks, signalSize, 8);
-		gridSize.y = signalSize;
-		sharedMemSize = blocks.x / warpSize;
-		CalculateNewAlphaStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
-
-		blocks.x = 128;
-		ThresholdAlpha<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaD, dictionaryWords);
+		CalculateNewAlphaStep << <GetGridSize(blocks, dictionaryWords), blocks >> > (dictionaryWords, signalSize);
 
 		lambda = 1.01f * lambda;
 

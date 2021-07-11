@@ -13,6 +13,7 @@
 #include "cpu/HostLiMapS.h"
 #include "gpu/DeviceLiMapSv1.cuh"
 #include "gpu/DeviceLiMapSv2.cuh"
+#include "gpu/DeviceLiMapSv3.cuh"
 
 void ReadColumnVector(const std::string& file, float* dest) {
 	std::ifstream stream(file);
@@ -122,7 +123,7 @@ int main(int argn, char** argc)
 	}
 	std::cout << "CuBlas (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
-	std::cout << "Starting GPU kernel execution ..." << std::endl;
+	std::cout << "Starting GPU kernel (naive) execution ..." << std::endl;
 	{
 		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
 		DeviceLiMapSv2 deviceLiMapSv2(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
@@ -150,6 +151,33 @@ int main(int argn, char** argc)
 	}
 	std::cout << "GPU kernel  execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
+	std::cout << "Starting GPU kernel (improved) execution ..." << std::endl;
+	{
+		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
+		DeviceLiMapSv3 deviceLiMapSv3(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
+
+		sw.Restart();
+		deviceLiMapSv3.Execute(maxIterations);
+		sw.Stop();
+
+		const std::vector<float>& hostResult = hostLiMapS.GetAlpha();
+		const std::vector<float>& kernelResult = deviceLiMapSv3.GetAlpha();
+
+		std::cout.precision(std::numeric_limits<float>::max_digits10);
+		for (size_t i = 0; i < dictionaryWords; i++)
+		{
+			/*if (hostResult[i] != kernelResult[i])
+			{
+				std::cout << "Alpha[" << i << "] mismatch: " << hostResult[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
+			}*/
+
+			if (actualSolution[i] != kernelResult[i])
+			{
+				std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
+			}
+		}
+	}
+	std::cout << "GPU kernel (improved)  execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
 	/* ----- Cleanup ----- */
 
