@@ -94,7 +94,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <CudaCompile Include="gpu\benchmarks.cu" />
-    <CudaCompile Include="gpu\DeviceLiMapS3.cu" />
+    <CudaCompile Include="gpu\DeviceLiMapSv3.cu" />
     <CudaCompile Include="gpu\DeviceLiMapSTex.cu" />
     <CudaCompile Include="gpu\DeviceLiMapSv1.cu" />
     <CudaCompile Include="gpu\DeviceLiMapSv2.cu" />
@@ -108,7 +108,6 @@
     <ClInclude Include="BaseLiMapS.h" />
     <ClInclude Include="cpu\intrin_ext.h" />
     <ClInclude Include="cpu\HostLiMapS.h" />
-    <ClInclude Include="cpu\matrices.hpp" />
     <ClInclude Include="cpu\vectors.hpp" />
     <ClInclude Include="gpu\benchmarks.cuh" />
     <ClInclude Include="gpu\cuda_intrinsics.h" />
@@ -120,6 +119,7 @@
     <ClInclude Include="gpu\cublas_shared.h" />
     <ClInclude Include="gpu\cuda_shared.h" />
     <ClInclude Include="gpu\DeviceLiMapSv1.cuh" />
+    <ClInclude Include="main.h" />
     <ClInclude Include="StopWatch.h" />
   </ItemGroup>
   <ItemGroup>

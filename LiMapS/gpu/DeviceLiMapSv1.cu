@@ -18,7 +18,7 @@ DeviceLiMapSv1::DeviceLiMapSv1(std::vector<float>& solution, std::vector<float>&
 	_dictionaryInverse = make_cuda<float>(DINV.size());
 
 	_alpha = make_cuda<float>(solution.size());
-	_alphaOld = make_cuda<float>(solution.size());
+	_alphaNew = make_cuda<float>(solution.size());
 
 }
 
@@ -52,7 +52,7 @@ void DeviceLiMapSv1::Execute(int iterations)
 	for (; iteration < iterations; iteration++)
 	{
 		// First we save the current alpha as the old one, in order to use it later
-		CUBLAS_CHECK(cublasScopy(_cublasHandle, _dictionaryWords, _alpha.get(), 1, _alphaOld.get(), 1));
+		CUBLAS_CHECK(cublasScopy(_cublasHandle, _dictionaryWords, _alpha.get(), 1, _alphaNew.get(), 1));
 
 		GetBetaKrnl << <gridSize, blockSize >> > (lambda, _alpha.get(), beta.get(), _dictionaryWords);
 
@@ -65,12 +65,12 @@ void DeviceLiMapSv1::Execute(int iterations)
 		CUBLAS_CHECK(cublasSscal(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1));
 
 		ThresholdKrnl << <gridSize, blockSize >> > (_alpha.get(), _dictionaryWords, _alphaElementTh);
-		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1, _alphaOld.get(), 1));		
+		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1, _alphaNew.get(), 1));		
 
 		lambda = lambda * gamma;
 
 		float diffNorm = 0.0f;
-		CUBLAS_CHECK(cublasSnrm2(_cublasHandle, _dictionaryWords, _alphaOld.get(), 1, &diffNorm));
+		CUBLAS_CHECK(cublasSnrm2(_cublasHandle, _dictionaryWords, _alphaNew.get(), 1, &diffNorm));
 		if (diffNorm < _epsilon) {
 			// We are done with the iterations. Norm is very small
 			break;

@@ -4,17 +4,13 @@
 
 #include "../BaseLiMapS.h"
 #include "vectors.hpp"
-#include "matrices.hpp"
 #include "intrin_ext.h"
 
 
 class HostLiMapS : public BaseLiMapS {
 private:
 	std::vector<float> _alpha;
-	std::vector<float> _oldAlpha;
-
-	std::vector<float> _snrs;
-
+	std::vector<float> _newAlpha;
 
 	void GetBeta(float* beta, float lambda);
 public:
@@ -23,5 +19,4 @@ public:
 	void Execute(int iterations);
 
 	inline const std::vector<float>& GetAlpha() const { return _alpha; }
-
 };

@@ -16,7 +16,7 @@ static __device__ float* _signalD;
 static __device__ float* _dictionaryD;
 static __device__ float* _dictionaryInverseD;
 static __device__ float* _alphaD;
-static __device__ float* _alphaOldD;
+static __device__ float* _alphaNewD;
 
 static __device__ float* _beta;
 static __device__ float* _intermD;
@@ -84,7 +84,7 @@ __global__ void GetAlpha2(size_t dictionaryWords, size_t signalSize) {
 
 	KernelReduce<size_t>(data, signalSize, [](size_t index, float sum) {
 		atomicAdd(&_alphaD[index], sum);
-		atomicAdd(&_alphaOldD[index], sum);
+		atomicAdd(&_alphaNewD[index], sum);
 		}, idy);
 }
 
@@ -193,7 +193,7 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 	{
 		// We set the alphaOld as the current alpha. We can do this by just swapping the pointer, avoiding 
 		// useless data transfer
-		cuda::std::swap(_alphaD, _alphaOldD);
+		cuda::std::swap(_alphaD, _alphaNewD);
 
 		// From here, we split our computation next alpha computation in different step. This is necessary since some calculation
 		// depend on data that should accessed after a global sync point (ex, after calculating the intermediate (dic * beta - sig) vector
@@ -238,7 +238,7 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 
 		// 3.4) We see how much alpha is changed
 		_alphaDiffSquareSum = 0.0f;
-		SquareDiffSumKrnlUnroll<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaD, _alphaOldD, dictionaryWords, &_alphaDiffSquareSum);
+		SquareDiffSumKrnlUnroll<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaNewD,_alphaD, dictionaryWords, &_alphaDiffSquareSum);
 		CUDA_CHECKD(cudaDeviceSynchronize());
 
 		float norm = sqrtf(_alphaDiffSquareSum);
@@ -282,7 +282,7 @@ DeviceLiMapSv3::DeviceLiMapSv3(const float* solution, const float* signal, const
 	CUDA_CHECK(cudaMemcpyToSymbol(_alphaD, &dummyPtr, sizeof(void*)));
 
 	dummyPtr = _alphaOldPtr.get();
-	CUDA_CHECK(cudaMemcpyToSymbol(_alphaOldD, &dummyPtr, sizeof(void*)));
+	CUDA_CHECK(cudaMemcpyToSymbol(_alphaNewD, &dummyPtr, sizeof(void*)));
 }
 
 

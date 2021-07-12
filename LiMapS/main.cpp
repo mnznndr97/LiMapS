@@ -15,6 +15,7 @@
 #include "gpu/DeviceLiMapSv2.cuh"
 #include "gpu/DeviceLiMapSv3.cuh"
 #include "gpu/DeviceLiMapSTex.cuh"
+#include "main.h"
 
 void ReadColumnVector(const std::string& file, float* dest) {
 	std::ifstream stream(file);
@@ -50,7 +51,50 @@ void ReadMatrix(const std::string& file, float* dest, size_t rows, size_t cols) 
 		++rowIndex;
 	}
 	assert(rowIndex == rows);
+}
 
+void RunLiMapSOnCPU(const float* dictionary, const float* dictionaryInverse, const float* signal, const float* actualSolution, size_t dictionaryWords, size_t signalSize, int maxIterations) {
+	std::cout << "Starting CPU execution ..." << std::endl;
+
+	HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
+
+	StopWatch sw;
+	sw.Restart();
+	hostLiMapS.Execute(maxIterations);
+	sw.Stop();
+
+	const std::vector<float>& alphaResult = hostLiMapS.GetAlpha();
+	for (size_t i = 0; i < dictionaryWords; i++)
+	{
+		if (actualSolution[i] != alphaResult[i])
+		{
+			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from cpu" << std::endl;
+		}
+	}
+	std::cout << "CPU execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
+}
+
+void RunBaseLiMapSKernel(const float* dictionary, const float* dictionaryInverse, const float* signal, const float* actualSolution, size_t dictionaryWords, size_t signalSize, int maxIterations) {
+	std::cout << "Starting GPU kernel (naive) execution ..." << std::endl;
+	DeviceLiMapSv2 deviceLiMapSv2(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
+
+	StopWatch sw;
+	sw.Restart();
+	deviceLiMapSv2.Execute(maxIterations);
+	sw.Stop();
+
+	const std::vector<float>& kernelResult = deviceLiMapSv2.GetAlpha();
+
+
+	const std::vector<float>& alphaResult = deviceLiMapSv2.GetAlpha();
+	for (size_t i = 0; i < dictionaryWords; i++)
+	{
+		if (actualSolution[i] != alphaResult[i])
+		{
+			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from GPU" << std::endl;
+		}
+	}
+	std::cout << "GPU kernel (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 }
 
 int main(int argn, char** argc)
@@ -67,10 +111,11 @@ int main(int argn, char** argc)
 		return 0;
 	}
 
+	std::cout.precision(std::numeric_limits<float>::max_digits10);
 	std::cout << " *** LiMapS Implementation ***" << std::endl;
 
-	const int signalSize = 2000;
-	const int dictionaryWords = 8000;
+	const int signalSize = 200;
+	const int dictionaryWords = 800;
 
 	// We may use some async CUDA memories operation so better to declare our pointer as non-paginable memory
 	float* actualSolution;
@@ -86,35 +131,22 @@ int main(int argn, char** argc)
 	std::cout << "Reading data ..." << std::endl;
 
 	// Let' s read our data from a file for the moment and assert that evertything has the right dimension
-	ReadColumnVector("data\\2\\in_true_alpha.txt", actualSolution);
-	ReadColumnVector("data\\2\\in_signal.txt", signal);
-	ReadMatrix("data\\2\\in_D.txt", dictionary, signalSize, dictionaryWords);
-	ReadMatrix("data\\2\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
+	ReadColumnVector("data\\1\\in_true_alpha.txt", actualSolution);
+	ReadColumnVector("data\\1\\in_signal.txt", signal);
+	ReadMatrix("data\\1\\in_D.txt", dictionary, signalSize, dictionaryWords);
+	ReadMatrix("data\\1\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
 
 
 	std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
 	std::cout << "Signal size: " << signalSize << std::endl << std::endl;
 
-	StopWatch sw;
-
-	// Stopping criteria declaration
+		// Stopping criteria declaration
 	const int maxIterations = 1000;
 
 
-	std::cout << "Starting CPU execution ..." << std::endl;
+	RunLiMapSOnCPU(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
-	// Just enclose the call in an inner scope to release as soon as possible the extra host resources
-	{
-		HostLiMapS hostLiMapS(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
-
-		sw.Restart();
-		hostLiMapS.Execute(maxIterations);
-		sw.Stop();
-	}
-
-	std::cout << "CPU execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
-
-	std::cout << "Starting CuBlas (naive) execution ..." << std::endl;
+	//std::cout << "Starting CuBlas (naive) execution ..." << std::endl;
 	{
 		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
 #if NDEBUG
@@ -125,33 +157,12 @@ int main(int argn, char** argc)
 		sw.Stop();*/
 #endif
 	}
-	std::cout << "CuBlas (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
+	//std::cout << "CuBlas (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
-	std::cout << "Starting GPU kernel (naive) execution ..." << std::endl;
-	{
-		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
-		/*DeviceLiMapSv2 deviceLiMapSv2(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
-
-		sw.Restart();
-		deviceLiMapSv2.Execute(maxIterations);
-		sw.Stop();
-
-		const std::vector<float>& kernelResult = deviceLiMapSv2.GetAlpha();
-
-		std::cout.precision(std::numeric_limits<float>::max_digits10);
-		for (size_t i = 0; i < dictionaryWords; i++)
-		{
+	RunBaseLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
 
-			if (actualSolution[i] != kernelResult[i])
-			{
-				std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
-			}
-		}*/
-	}
-	std::cout << "GPU kernel  execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
-
-	double executionTimes = 0.0;
+	/*double executionTimes = 0.0;
 	int repetitions = 1;
 	std::cout << "Starting GPU kernel (improved) execution ..." << std::endl;
 	{
@@ -168,11 +179,6 @@ int main(int argn, char** argc)
 		std::cout.precision(std::numeric_limits<float>::max_digits10);
 		for (size_t i = 0; i < dictionaryWords; i++)
 		{
-			/*if (hostResult[i] != kernelResult[i])
-			{
-				std::cout << "Alpha[" << i << "] mismatch: " << hostResult[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
-			}*/
-
 			if (actualSolution[i] != kernelResult[i])
 			{
 				std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
@@ -199,11 +205,6 @@ int main(int argn, char** argc)
 		std::cout.precision(std::numeric_limits<float>::max_digits10);
 		for (size_t i = 0; i < dictionaryWords; i++)
 		{
-			/*if (hostResult[i] != kernelResult[i])
-			{
-				std::cout << "Alpha[" << i << "] mismatch: " << hostResult[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
-			}*/
-
 			if (actualSolution[i] != kernelResult[i])
 			{
 				std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
@@ -211,6 +212,7 @@ int main(int argn, char** argc)
 		}
 	}
 	std::cout << "GPU kernel (texture)  execution time: " << (executionTimes / repetitions) << " ms" << std::endl << std::endl;
+	*/
 
 	/* ----- Cleanup ----- */
 

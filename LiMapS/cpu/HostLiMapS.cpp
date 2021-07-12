@@ -1,5 +1,4 @@
 #include "HostLiMapS.h"
-#include "matrices.hpp"
 #include "vectors.hpp"
 
 HostLiMapS::HostLiMapS(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize)
@@ -7,7 +6,7 @@ HostLiMapS::HostLiMapS(const float* solution, const float* signal, const float* 
 {
 	// Let's pre-allocate the alpha and the old alpha space
 	_alpha.resize(dictionaryWords);
-	_oldAlpha.resize(dictionaryWords);
+	_newAlpha.resize(dictionaryWords);
 }
 
 void HostLiMapS::GetBeta(float* beta, float lambda) {
@@ -46,11 +45,14 @@ void HostLiMapS::Execute(int iterations)
 {
 	// The first thing we need to do is to calculate the starting alpha
 	Mat2VecProduct(_dictionaryInverseHost, _dictionaryWords, _signalSize, _signalHost, _alpha.data());
+	// We set the first "old" alpha equals to the "new" one
+	std::copy(_alpha.begin(), _alpha.end(), _newAlpha.begin());
 
+	// Then we calculate the first lambda value using the signal norm
 	float signalNorm = GetEuclideanNorm(_signalHost, _signalSize);
 	float lambda = 1.0f / signalNorm;
 
-	// We need two temporary arrays to do out job
+	// We need two temporary arrays to do our job
 	std::vector<float> beta(_alpha.size());
 	std::vector<float> interm(_signalSize);
 
@@ -58,22 +60,24 @@ void HostLiMapS::Execute(int iterations)
 	int iteration = 0;
 	for (; iteration < iterations; iteration++)
 	{
-		// First we save the current alpha as the old one, in order to use it later
-		std::copy(_alpha.begin(), _alpha.end(), _oldAlpha.begin());
+		// Swap the alpha vector, so we don't have to perform any mem copy
+		std::swap(_alpha, _newAlpha);
 
-		// beta = alpha.*(1 - exp(-lambda.*abs(alpha)));
 		GetBeta(beta.data(), lambda);
 
+		// D * beta - s
 		Mat2VecProduct(_dictionaryHost, _signalSize, _dictionaryWords, beta.data(), interm.data());
 		SubVec(interm.data(), _signalHost, interm.data(), _signalSize);
 
-		Mat2VecProduct(_dictionaryInverseHost, _dictionaryWords, _signalSize, interm.data(), _alpha.data());
-		SubVec(beta, _alpha, _alpha);
+		// beta - DINV * (D * beta - s);
+		Mat2VecProduct(_dictionaryInverseHost, _dictionaryWords, _signalSize, interm.data(), _newAlpha.data());
+		SubVec(beta.data(), _newAlpha.data(), _newAlpha.data(), _dictionaryWords);
 
-		ThresholdVec(_alpha, _alphaElementTh);
+		// Alpha thresholding 
+		ThresholdVec(_newAlpha.data(), _dictionaryWords, _alphaElementTh);
 		lambda = gamma * lambda;
 
-		if (GetDiffEuclideanNorm(_alpha, _oldAlpha) < epsilon) {
+		if (GetDiffEuclideanNorm(_newAlpha.data(), _alpha.data(), _dictionaryWords) < epsilon) {
 			// We are done with the iterations. Norm is very small
 			break;
 		}

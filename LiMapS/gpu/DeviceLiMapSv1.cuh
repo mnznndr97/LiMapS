@@ -21,7 +21,7 @@ private:
 	cuda_ptr<float> _dictionaryInverse;
 
 	cuda_ptr<float> _alpha;
-	cuda_ptr<float> _alphaOld;
+	cuda_ptr<float> _alphaNew;
 
 	cublasHandle_t _cublasHandle;
 

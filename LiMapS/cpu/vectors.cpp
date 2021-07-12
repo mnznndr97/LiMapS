@@ -1,31 +1,12 @@
 #include "vectors.hpp"
+
+#include <intrin.h>
 #include "intrin_ext.h"
 
-#include <vector>
-
-void AddVec(const float* a, const float* b, float* dest, size_t size) {
-	size_t index = 0;
-	for (index = 0; index < size / 8; index++)
-	{
-		__m256 aVec = _mm256_load_ps(a + (index * 8));
-		__m256 bVec = _mm256_load_ps(b + (index * 8));
-
-		_mm256_store_ps(dest + (index * 8), _mm256_add_ps(aVec, bVec));
-	}
-
-	for (size_t i = index * 8; i < size; i++)
-	{
-		dest[i] = a[i] + b[i];
-	}
-}
-
-void SubVec(const std::vector<float>& a, const std::vector<float>& b, std::vector<float>& dest) {
-	assert(a.size() == b.size());
-	assert(b.size() == dest.size());
-	SubVec(a.data(), b.data(), dest.data(), dest.size());
-}
-
 void SubVec(const float* a, const float* b, float* dest, size_t size) {
+	// Simple subtraction loop using first a 8 floats pack register
+	// then a naive single item loop
+	
 	size_t index = 0;
 	for (index = 0; index < size / 8; index++)
 	{
@@ -41,14 +22,6 @@ void SubVec(const float* a, const float* b, float* dest, size_t size) {
 	}
 }
 
-float GetEuclideanNorm(const std::vector<float>& vector) {
-	return GetEuclideanNorm(vector.data(), vector.size());
-}
-
-float GetEuclideanNorm(std::unique_ptr<float[]> vector, size_t size) {
-	return GetEuclideanNorm(vector.get(), size);
-}
-
 float GetEuclideanNorm(const float* vector, size_t size) {
 	// We assumes that our data are correct
 	assert(vector != nullptr);
@@ -57,7 +30,7 @@ float GetEuclideanNorm(const float* vector, size_t size) {
 	if (size == 0) return 0.0f;
 
 	__m256 sumVector = _mm256_setzero_ps();
-	size_t index = 0;	
+	size_t index = 0;
 	for (index = 0; index < size / 8; index++)
 	{
 		__m256 data = _mm256_load_ps(vector + (index * 8));
@@ -70,12 +43,6 @@ float GetEuclideanNorm(const float* vector, size_t size) {
 	}
 
 	return sqrtf(tailSum + __mm256_sumall_ps(sumVector));
-}
-
-float GetDiffEuclideanNorm(const std::vector<float>& vector1, const std::vector<float>& vector2) {
-	assert(vector1.size() == vector2.size());
-
-	return GetDiffEuclideanNorm(vector1.data(), vector2.data(), vector1.size());
 }
 
 float GetDiffEuclideanNorm(const float* vector1, const float* vector2, size_t size) {
@@ -133,10 +100,6 @@ float GetDotProduct(const float* v1, const float* v2, size_t size) {
 	return tailDotProd + __mm256_sumall_ps(dpSums);
 }
 
-void ThresholdVec(std::vector<float>& vec, float threshold) {
-	ThresholdVec(vec.data(), vec.size(), threshold);
-}
-
 /// <summary>
 /// Set to 0 all the element below the specified threshold
 /// </summary>
@@ -161,5 +124,20 @@ void ThresholdVec(float* vec, size_t size, float threshold) {
 		if (vec[i] < threshold) {
 			vec[i] = 0.0f;
 		}
+	}
+}
+
+void Mat2VecProduct(const float* matrix, size_t rows, size_t cols, const float* colVector, float* destination)
+{
+	assert(matrix != nullptr);
+	assert(colVector != nullptr);
+	assert(destination != nullptr);
+	assert(rows > 0);
+	assert(cols > 0);
+
+	for (size_t row = 0; row < rows; row++)
+	{
+		const float* rowVector = &matrix[row * cols];
+		destination[row] = GetDotProduct(rowVector, colVector, cols);
 	}
 }
