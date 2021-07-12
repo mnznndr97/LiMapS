@@ -95,6 +95,7 @@
   <ItemGroup>
     <CudaCompile Include="gpu\benchmarks.cu" />
     <CudaCompile Include="gpu\DeviceLiMapS3.cu" />
+    <CudaCompile Include="gpu\DeviceLiMapSTex.cu" />
     <CudaCompile Include="gpu\DeviceLiMapSv1.cu" />
     <CudaCompile Include="gpu\DeviceLiMapSv2.cu" />
     <CudaCompile Include="gpu\kernels.cu" />
@@ -111,6 +112,7 @@
     <ClInclude Include="cpu\vectors.hpp" />
     <ClInclude Include="gpu\benchmarks.cuh" />
     <ClInclude Include="gpu\cuda_intrinsics.h" />
+    <ClInclude Include="gpu\DeviceLiMapSTex.cuh" />
     <ClInclude Include="gpu\DeviceLiMapSv2.cuh" />
     <ClInclude Include="gpu\DeviceLiMapSv3.cuh" />
     <ClInclude Include="gpu\kernels.cuh" />
