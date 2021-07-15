@@ -117,7 +117,7 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 	_beta = new float[dictionaryWords];
 	_intermD = new float[signalSize];
 
-	blocks.x = 32;
+	blocks.x = 128;
 	// 2) The second step of the algorithm is to prepare the starting alpha vector so also here we 
 	// Launch the kernel calculation and we synchronize the device
 

@@ -22,31 +22,7 @@ static __device__ float _signalSquareSum;
 static __device__ float _alphaDiffSquareSum;
 
 template<int unrollFactor>
-static __global__ void FillInterm(float* vector, size_t size) {
-	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		if (vOffset < size) vector[vOffset] = -_signalD[vOffset];
-	}
-}
-
-template<int unrollFactor>
-static __global__ void FillAlpha(float* vector, size_t size) {
-	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		if (vOffset < size) vector[vOffset] = _beta[vOffset];
-	}
-}
-
-template<int unrollFactor>
-static __global__ void GetAlpha2(cudaTextureObject_t dictionaryInverseTexture, size_t dictionaryWords, size_t signalSize) {
+__global__ void GetAlphaTex(cudaTextureObject_t dictionaryInverseTexture, size_t dictionaryWords, size_t signalSize) {
 	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -63,13 +39,13 @@ static __global__ void GetAlpha2(cudaTextureObject_t dictionaryInverseTexture, s
 		data += (dicInverse * signal);
 	}
 
-	KernelReduce<size_t>(data, signalSize, [](size_t index, float sum) {
-		atomicAdd(&_alphaD[index], sum);
-		atomicAdd(&_alphaNewD[index], sum);
-		}, idy);
+	KernelReduce<float*, float*>(data, signalSize, [](float* ptr1, float* ptr2, float sum) {
+		atomicAdd(ptr1, sum);
+		atomicAdd(ptr2, sum);
+		}, &_alphaD[idy], &_alphaNewD[idy]);
 }
 
-static __global__ void CalculateBetaStep2(float lambda, size_t dictionaryWords, size_t signalSize) {
+__global__ void CalculateBetaStepTex(float lambda, size_t dictionaryWords, size_t signalSize) {
 	cg::grid_group grid = cg::this_grid();
 
 	unsigned long long index = grid.thread_rank();
@@ -81,58 +57,7 @@ static __global__ void CalculateBetaStep2(float lambda, size_t dictionaryWords, 
 	_beta[index] = GetBeta(lambda, _alphaD[index]);
 }
 
-
-template<int unrollFactor>
-static __global__ void CalculateIntermStep2(cudaTextureObject_t dictionaryTexture, size_t dictionaryWords, size_t signalSize) {
-
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (idy >= signalSize) return;
-
-	float data = 0.0f;
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		float dic = vOffset < dictionaryWords ? tex2D<float>(dictionaryTexture, vOffset, idy) : 0.0f;
-		float beta = vOffset < dictionaryWords ? _beta[vOffset] : 0.0f;
-
-		data += (dic * beta);
-		//data = fma(dic, beta, data);
-	}
-
-	KernelReduce<size_t>(data, dictionaryWords, [](size_t index, float sum) {
-		atomicAdd(&_intermD[index], sum);
-		}, idy);
-}
-
-
-template<int unrollFactor>
-static __global__ void CalculateNewAlphaStep2(cudaTextureObject_t dictionaryInverseTexture, size_t dictionaryWords, size_t signalSize) {
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (idy >= dictionaryWords) return;
-
-	float data = 0.0f;
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		float dicInv = vOffset < signalSize ? tex2D<float>(dictionaryInverseTexture, vOffset, idy) : 0.0f;
-		float interm = vOffset < signalSize ? _intermD[vOffset] : 0.0f;
-
-		data += (dicInv * interm);
-	}
-
-	KernelReduce<size_t>(data, signalSize, [](size_t index, float sum) {
-		atomicAdd(&_alphaD[index], -sum);
-		}, idy);
-}
-
-
-static __global__ void LiMapS(cudaTextureObject_t dictionaryTexture, cudaTextureObject_t dictionaryInverseTexture, size_t dictionaryWords, size_t signalSize) {
+__global__ void LiMapSTex(cudaTextureObject_t dictionaryTexture, cudaTextureObject_t dictionaryInverseTexture, size_t dictionaryWords, size_t signalSize) {
 
 	// Handle to thread block group
 	cg::grid_group grid = cg::this_grid();
@@ -165,7 +90,7 @@ static __global__ void LiMapS(cudaTextureObject_t dictionaryTexture, cudaTexture
 	dim3 gridSize = GetGridSize(blocks, signalSize, 8);
 	gridSize.y = dictionaryWords;
 	int sharedMemSize = blocks.x / warpSize;
-	GetAlpha2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryInverseTexture, dictionaryWords, signalSize);
+	GetAlphaTex<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryInverseTexture, dictionaryWords, signalSize);
 	CUDA_CHECKD(cudaPeekAtLastError());
 	CUDA_CHECKD(cudaDeviceSynchronize());
 
@@ -184,23 +109,22 @@ static __global__ void LiMapS(cudaTextureObject_t dictionaryTexture, cudaTexture
 
 		// 3.1) We need to compute the beta vector for this iterarion
 		blocks.x = 128;
-		CalculateBetaStep2 << <GetGridSize(blocks, dictionaryWords), blocks, 0 >> > (lambda, dictionaryWords, signalSize);
+		CalculateBetaStepTex << <GetGridSize(blocks, dictionaryWords), blocks, 0 >> > (lambda, dictionaryWords, signalSize);
 
 		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
-		blocks.x = 64;
-		FillInterm<8> << <GetGridSize(blocks, signalSize, 8), blocks, 0 >> > (_intermD, signalSize);
+		blocks.x = 128;
+		CopyTo<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks, 0 >> > (_signalD, signalSize, _intermD, true);
 
 		blocks.x = 64;
 		gridSize = GetGridSize(blocks, dictionaryWords, 8);
 		gridSize.y = signalSize;
 		int sharedMemSize = blocks.x / warpSize;
-		CalculateIntermStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryTexture, dictionaryWords, signalSize);
+		Matrix2Vector<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryTexture, _beta, _intermD, dictionaryWords, signalSize, false);
 		CUDA_CHECKD(cudaPeekAtLastError());
 
 		// 3.3) We compute the new alpha with the thresholding at the end
-
-		blocks.x = 64;
-		FillAlpha<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks, 0 >> > (_alphaD, dictionaryWords);
+		blocks.x = 128;
+		CopyTo<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks, 0 >> > (_beta, dictionaryWords, _alphaNewD, false);
 
 		blocks.x = 128;
 		blocks.y = 1;
@@ -208,7 +132,7 @@ static __global__ void LiMapS(cudaTextureObject_t dictionaryTexture, cudaTexture
 		gridSize.y = (dictionaryWords + 7) / 8;
 		gridSize.y = dictionaryWords;
 		sharedMemSize = blocks.x / warpSize;
-		CalculateNewAlphaStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryInverseTexture, dictionaryWords, signalSize);
+		Matrix2Vector<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryInverseTexture, _intermD, _alphaNewD, signalSize, dictionaryWords, true);
 		CUDA_CHECKD(cudaPeekAtLastError());
 
 		blocks.x = 128;
@@ -297,8 +221,8 @@ void DeviceLiMapSTex::Execute(int iterations)
 	struct cudaTextureDesc texDesc;
 	memset(&texDesc, 0, sizeof(texDesc));
 	// When addressing our texture, we should ALWAYS use the correct coordinates
-	texDesc.addressMode[0] = cudaAddressModeClamp;
-	texDesc.addressMode[1] = cudaAddressModeClamp;
+	texDesc.addressMode[0] = cudaAddressModeBorder;
+	texDesc.addressMode[1] = cudaAddressModeBorder;
 	// No interpolation either
 	texDesc.filterMode = cudaFilterModePoint;
 	// We don't want any normalization in input/output 
@@ -312,7 +236,7 @@ void DeviceLiMapSTex::Execute(int iterations)
 
 
 	cudaEventRecord(start);
-	LiMapS << < 1, 1 >> > (dictionaryTexture, dictionaryInverseTexture, _dictionaryWords, _signalSize);
+	LiMapSTex << < 1, 1 >> > (dictionaryTexture, dictionaryInverseTexture, _dictionaryWords, _signalSize);
 	cudaEventRecord(stop);
 
 	CUDA_CHECK(cudaMemcpyAsync(_alphaH.data(), _alphaPtr.get(), sizeof(float) * _dictionaryWords, cudaMemcpyDeviceToHost));

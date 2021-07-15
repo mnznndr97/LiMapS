@@ -113,6 +113,26 @@ void RunImprovedLiMapSKernel(const float* dictionary, const float* dictionaryInv
 	std::cout << "GPU kernel (improved) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 }
 
+void RunTexLiMapSKernel(const float* dictionary, const float* dictionaryInverse, const float* signal, const float* actualSolution, size_t dictionaryWords, size_t signalSize, int maxIterations) {
+	std::cout << "Starting GPU kernel (texture) execution ..." << std::endl;
+	DeviceLiMapSTex deviceLiMapSTex(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
+
+	StopWatch sw;
+	sw.Restart();
+	deviceLiMapSTex.Execute(maxIterations);
+	sw.Stop();
+
+	const std::vector<float>& alphaResult = deviceLiMapSTex.GetAlpha();
+	for (size_t i = 0; i < dictionaryWords; i++)
+	{
+		if (actualSolution[i] != alphaResult[i])
+		{
+			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from GPU" << std::endl;
+		}
+	}
+	std::cout << "GPU kernel (texture) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
+}
+
 int main(int argn, char** argc)
 {
 	cudaDeviceProp props;
@@ -170,7 +190,7 @@ int main(int argn, char** argc)
 	const int maxIterations = 1000;
 
 
-	RunLiMapSOnCPU(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+	//RunLiMapSOnCPU(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
 	//std::cout << "Starting CuBlas (naive) execution ..." << std::endl;
 	{
@@ -185,36 +205,9 @@ int main(int argn, char** argc)
 	}
 	//std::cout << "CuBlas (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 
-	RunBaseLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+	//RunBaseLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 	RunImprovedLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
-
-	/*
-	executionTimes = 0.0;
-	repetitions = 1;
-	std::cout << "Starting GPU kernel (texture) execution ..." << std::endl;
-	{
-		// Just enclose the call in an inner scope to release as soon as possible the GPU resources
-		DeviceLiMapSTex deviceLiMapSTex(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
-
-
-		sw.Restart();
-		deviceLiMapSTex.Execute(maxIterations);
-		sw.Stop();
-		executionTimes += sw.Elapsed();
-
-		const std::vector<float>& kernelResult = deviceLiMapSTex.GetAlpha();
-
-		std::cout.precision(std::numeric_limits<float>::max_digits10);
-		for (size_t i = 0; i < dictionaryWords; i++)
-		{
-			if (actualSolution[i] != kernelResult[i])
-			{
-				std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " on host, " << kernelResult[i] << " from kernel" << std::endl;
-			}
-		}
-	}
-	std::cout << "GPU kernel (texture)  execution time: " << (executionTimes / repetitions) << " ms" << std::endl << std::endl;
-	*/
+	RunTexLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
 	/* ----- Cleanup ----- */
 

@@ -37,7 +37,7 @@ __global__ void FillInterm(float* vector, size_t size) {
 }
 
 template<int unrollFactor>
-__global__ void GetAlpha2(size_t dictionaryWords, size_t signalSize) {
+__global__ void GetAlphaImprv(size_t dictionaryWords, size_t signalSize) {
 	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -55,10 +55,10 @@ __global__ void GetAlpha2(size_t dictionaryWords, size_t signalSize) {
 		data = fmaf(dicInverse, signal, data);
 	}
 
-	KernelReduce<size_t>(data, signalSize, [](size_t index, float sum) {
-		atomicAdd(&_alphaD[index], sum);
-		atomicAdd(&_alphaNewD[index], sum);
-		}, idy);
+	KernelReduce<float*, float*>(data, signalSize, [](float* ptr1, float* ptr2, float sum) {
+		atomicAdd(ptr1, sum);
+		atomicAdd(ptr2, sum);
+		}, &_alphaD[idy], &_alphaNewD[idy]);
 }
 
 __global__ void CalculateBetaStep2(float lambda, size_t dictionaryWords, size_t signalSize) {
@@ -73,58 +73,6 @@ __global__ void CalculateBetaStep2(float lambda, size_t dictionaryWords, size_t 
 	_beta[index] = GetBeta(lambda, _alphaD[index]);
 }
 
-
-template<int unrollFactor>
-__global__ void CalculateIntermStep2(size_t dictionaryWords, size_t signalSize) {
-
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (idy >= signalSize) return;
-
-	float data = 0.0f;
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		float dic = vOffset < dictionaryWords ? _dictionaryD[idy * dictionaryWords + vOffset] : 0.0f;
-		float beta = vOffset < dictionaryWords ? _beta[vOffset] : 0.0f;
-
-		//data += (dic * beta);
-		data = fmaf(dic, beta, data);
-	}
-
-	KernelReduce<size_t>(data, dictionaryWords, [](size_t index, float sum) {
-		atomicAdd(&_intermD[index], sum);
-		}, idy);
-}
-
-
-template<int unrollFactor>
-__global__ void CalculateNewAlphaStep2(size_t dictionaryWords, size_t signalSize) {
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (idy >= dictionaryWords) return;
-
-	float data = 0.0f;
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		float dicInv = vOffset < signalSize ? _dictionaryInverseD[idy * signalSize + vOffset] : 0.0f;
-		float interm = vOffset < signalSize ? _intermD[vOffset] : 0.0f;
-
-		//data += (dicInv * interm);
-		data = fmaf(dicInv, interm, data);
-	}
-
-	KernelReduce<size_t>(data, signalSize, [](size_t index, float sum) {
-		atomicAdd(&_alphaNewD[index], -sum);
-		}, idy);
-}
-
-
 __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 
 	// Handle to thread block group
@@ -135,7 +83,7 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 	// the signal norm. So we enqueue on the default stream the SquareSum operation and then we wait for it.
 	// The norm is foundamental for the next steps so there is nothing that we can do to avoid the sync time waste
 	_signalSquareSum = 0.0f;
-	dim3 blocks(256);
+	dim3 blocks(128);
 	SquareSumKrnlUnroll<8> << <GetGridSize(blocks, signalSize, 8), blocks, blocks.x / warpSize >> > (_signalD, signalSize, &_signalSquareSum);
 	CUDA_CHECKD(cudaDeviceSynchronize());
 
@@ -147,7 +95,7 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 	_beta = new float[dictionaryWords];
 	_intermD = new float[signalSize];
 
-	blocks.x = 32;
+	blocks.x = 128;
 	// 2) The second step of the algorithm is to prepare the starting alpha vector so also here we 
 	// Launch the kernel calculation and we synchronize the device
 
@@ -158,7 +106,7 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 	dim3 gridSize = GetGridSize(blocks, signalSize, 8);
 	gridSize.y = dictionaryWords;
 	int sharedMemSize = blocks.x / warpSize;
-	GetAlpha2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
+	GetAlphaImprv<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
 	CUDA_CHECKD(cudaPeekAtLastError());
 	CUDA_CHECKD(cudaDeviceSynchronize());
 
@@ -180,20 +128,20 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 		CalculateBetaStep2 << <GetGridSize(blocks, dictionaryWords), blocks, 0 >> > (lambda, dictionaryWords, signalSize);
 
 		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
-		blocks.x = 64;
-		FillInterm<8> << <GetGridSize(blocks, signalSize, 8), blocks, 0 >> > (_intermD, signalSize);
+		blocks.x = 128;
+		CopyTo<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks, 0 >> > (_signalD, signalSize, _intermD, true);
 
 		blocks.x = 64;
 		gridSize = GetGridSize(blocks, dictionaryWords, 8);
 		gridSize.y = signalSize;
 		int sharedMemSize = blocks.x / warpSize;
-		CalculateIntermStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
+		Matrix2Vector<8> << <gridSize, blocks, sharedMemSize >> > (_dictionaryD, _beta, _intermD, dictionaryWords, signalSize, false);
+		//CalculateIntermStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
 		CUDA_CHECKD(cudaPeekAtLastError());
 
 		// 3.3) We compute the new alpha with the thresholding at the end
-
 		blocks.x = 128;
-		CopyTo<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks, 0 >> > (_beta, dictionaryWords, _alphaNewD);
+		CopyTo<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks, 0 >> > (_beta, dictionaryWords, _alphaNewD, false);
 
 		blocks.x = 128;
 		blocks.y = 1;
@@ -201,8 +149,10 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 		gridSize.y = (dictionaryWords + 7) / 8;
 		gridSize.y = dictionaryWords;
 		sharedMemSize = blocks.x / warpSize;
-		CalculateNewAlphaStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
+		Matrix2Vector<8> << <gridSize, blocks, sharedMemSize >> > (_dictionaryInverseD, _intermD, _alphaNewD, signalSize, dictionaryWords, true);
 		CUDA_CHECKD(cudaPeekAtLastError());
+
+		//CalculateNewAlphaStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
 
 		// NB: Benchmarks says that 128 threads per block should result in the best occupancy for the
 		// threshold kernel

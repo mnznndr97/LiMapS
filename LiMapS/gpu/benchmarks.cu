@@ -20,12 +20,12 @@ void RunCopyBenchmarks(size_t dataSize) {
 	cuda_ptr<float> dest = make_cuda<float>(dataSize);
 
 	cublasHandle_t cublasHandle;
-	CUBLAS_CHECK(cublasCreate(&cublasHandle));
+	/*CUBLAS_CHECK(cublasCreate(&cublasHandle));
 	cublasScopy(cublasHandle, dataSize * sizeof(float), source.get(), 1, dest.get(), 1);
-	CUBLAS_CHECK(cublasDestroy(cublasHandle));
+	CUBLAS_CHECK(cublasDestroy(cublasHandle));*/
 
 	dim3 blockSize(128);
-	CopyTo<8> << <GetGridSize(blockSize, dataSize, 8), blockSize >> > (source.get(), dataSize, dest.get());
+	CopyTo<8> << <GetGridSize(blockSize, dataSize, 8), blockSize >> > (source.get(), dataSize, dest.get(), false);
 	CUDA_CHECK(cudaDeviceSynchronize());
 }
 
