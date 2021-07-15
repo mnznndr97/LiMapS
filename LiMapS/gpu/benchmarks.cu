@@ -15,6 +15,51 @@ __global__ void Fill(float* data, size_t size) {
 	}
 }
 
+void RunCopyBenchmarks(size_t dataSize) {
+	cuda_ptr<float> source = make_cuda<float>(dataSize);
+	cuda_ptr<float> dest = make_cuda<float>(dataSize);
+
+	cublasHandle_t cublasHandle;
+	CUBLAS_CHECK(cublasCreate(&cublasHandle));
+	cublasScopy(cublasHandle, dataSize * sizeof(float), source.get(), 1, dest.get(), 1);
+	CUBLAS_CHECK(cublasDestroy(cublasHandle));
+
+	dim3 blockSize(128);
+	CopyTo<8> << <GetGridSize(blockSize, dataSize, 8), blockSize >> > (source.get(), dataSize, dest.get());
+	CUDA_CHECK(cudaDeviceSynchronize());
+}
+
+void RunThresholdBenchmarks(size_t dataSize) {
+	cuda_ptr<float> data = make_cuda<float>(dataSize);
+
+	dim3 blockSize(256);
+	dim3 gridSize((dataSize + blockSize.x - 1) / blockSize.x);
+	cudaMemset(data.get(), 0, dataSize * sizeof(float));
+
+	std::cout << "Starting thresold kernel comparison benchmarks" << std::endl;
+
+	blockSize.x = 32;
+	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
+	ThresholdVector<1> << <gridSize, blockSize.x >> > (data.get(), dataSize);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	ThresholdVectorAlwaysWrite<1> << <gridSize, blockSize.x >> > (data.get(), dataSize);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	ThresholdVector<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x >> > (data.get(), dataSize);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	ThresholdVectorAlwaysWrite<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x >> > (data.get(), dataSize);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	blockSize.x = 128;
+	ThresholdVector<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x >> > (data.get(), dataSize);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	ThresholdVectorAlwaysWrite<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x >> > (data.get(), dataSize);
+	CUDA_CHECK(cudaDeviceSynchronize());
+}
+
 void RunNormBenchmarks(size_t dataSize) {
 	cuda_ptr<float> data = make_cuda<float>(dataSize);
 
@@ -61,7 +106,7 @@ void RunNormBenchmarks(size_t dataSize) {
 
 	blockSize.x = 32;
 	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	SquareSumKrnlUnroll<2><< <(gridSize.x +  1) / 2, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnroll<2> << <(gridSize.x + 1) / 2, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	cudaMemcpy(&norm, deviceNorm.get(), sizeof(float), cudaMemcpyDeviceToHost);
@@ -106,31 +151,25 @@ void RunNormBenchmarks(size_t dataSize) {
 	SquareSumKrnlUnroll<8> << <gridSize.x, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
-	
+
 
 	// 16-reduction with cache kernels
 	cudaMemset(deviceNorm.get(), CUBLAS_GEMM_ALGO0, sizeof(float));
 
 	blockSize.x = 128;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	gridSize.x = (gridSize.x + 15) / 16;
-	SquareSumKrnlUnrollLdg<16> << <gridSize.x, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnrollLdg<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	cudaMemcpy(&norm, deviceNorm.get(), sizeof(float), cudaMemcpyDeviceToHost);
 	norm = sqrt(norm);
-	std::cout << "Norm from kernel 16: " << norm << std::endl;
+	std::cout << "Norm from kernel 8 - ldg: " << norm << std::endl;
 
 	blockSize.x = 256;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	gridSize.x = (gridSize.x + 15) / 16;
-	SquareSumKrnlUnrollLdg<16> << <gridSize.x, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnrollLdg<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	blockSize.x = 512;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	gridSize.x = (gridSize.x + 15) / 16;
-	SquareSumKrnlUnrollLdg<16> << <gridSize.x, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnrollLdg<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 }
 

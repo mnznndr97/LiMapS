@@ -46,22 +46,6 @@ static __global__ void FillAlpha(float* vector, size_t size) {
 }
 
 template<int unrollFactor>
-static __global__ void ThresholdAlpha(float* vector, size_t size) {
-	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		if (vOffset < size) {
-			if (fabs(_alphaD[vOffset]) < 1e-4f)
-				_alphaD[vOffset] = 0.0f;
-		}
-
-	}
-}
-
-template<int unrollFactor>
 static __global__ void GetAlpha2(cudaTextureObject_t dictionaryInverseTexture, size_t dictionaryWords, size_t signalSize) {
 	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -229,7 +213,7 @@ static __global__ void LiMapS(cudaTextureObject_t dictionaryTexture, cudaTexture
 
 		blocks.x = 128;
 		blocks.y = 1;
-		ThresholdAlpha<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaD, dictionaryWords);
+		ThresholdVector<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaNewD, dictionaryWords);
 
 		lambda = 1.01f * lambda;
 

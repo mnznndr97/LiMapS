@@ -119,7 +119,6 @@
     <ClInclude Include="gpu\cublas_shared.h" />
     <ClInclude Include="gpu\cuda_shared.h" />
     <ClInclude Include="gpu\DeviceLiMapSv1.cuh" />
-    <ClInclude Include="main.h" />
     <ClInclude Include="StopWatch.h" />
   </ItemGroup>
   <ItemGroup>

@@ -5,6 +5,18 @@
 
 #define FULL_MASK 0xffffffff
 
+template<int unrollFactor>
+__global__ void CopyTo(const float* source, size_t size, float* dest) {
+	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
+
+#pragma unroll
+	for (size_t i = 0; i < unrollFactor; i++)
+	{
+		size_t vOffset = idx + i * blockDim.x;
+		if (vOffset < size) dest[vOffset] = source[vOffset];
+	}
+}
+
 __inline__ __device__ float GetBeta(float lambda, float data) {
 	return data * (1.0f - expf(-lambda * fabs(data)));
 }
@@ -171,4 +183,43 @@ __global__ void SquareDiffSumKrnlUnroll(const float* vec1, const float* vec2, si
 	KernelReduce<float*>(data, size, [](float* result, float data) {
 		atomicAdd(result, data);
 		}, result);
+}
+
+/// <summary>
+/// Applies a threshold to a vector. All the elements below the threshold are zeroed
+/// </summary>
+template<int unrollFactor>
+__global__ void ThresholdVector(float* vector, size_t size) {
+	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
+
+#pragma unroll
+	for (size_t i = 0; i < unrollFactor; i++)
+	{
+		size_t vOffset = idx + i * blockDim.x;
+		if (vOffset < size) {
+			float data = vector[vOffset];
+			if (data != 0.0f && fabs(data) < 1e-4f)
+				vector[vOffset] = 0.0f;
+		}
+
+	}
+}
+
+/// <summary>
+/// Applies a threshold to a vector. All the elements below the threshold are zeroed
+/// </summary>
+template<int unrollFactor>
+__global__ void ThresholdVectorAlwaysWrite(float* vector, size_t size) {
+	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
+
+#pragma unroll
+	for (size_t i = 0; i < unrollFactor; i++)
+	{
+		size_t vOffset = idx + i * blockDim.x;
+		if (vOffset < size) {
+			float data = vector[vOffset];
+			if (fabs(data) < 1e-4f)
+				vector[vOffset] = 0.0f;
+		}
+	}
 }
