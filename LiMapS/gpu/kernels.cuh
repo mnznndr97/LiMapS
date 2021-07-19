@@ -11,10 +11,11 @@
 template<int unrollFactor>
 __global__ void CopyTo(const float* source, size_t size, float* dest, bool negate) {
 	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
+	// MicroOpt: this may be passed as template parameter
 	float a = negate ? -1.0f : 1.0f;
 
 #pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
+	for (int i = 0; i < unrollFactor; i++)
 	{
 		size_t vOffset = idx + i * blockDim.x;
 		if (vOffset < size) dest[vOffset] = a * source[vOffset];
@@ -38,7 +39,7 @@ __inline__ __host__ __device__ dim3 GetGridSize(const dim3& blockSize, size_t da
 	// In our application only one dimension is needed
 
 	// We first fix the grid size using the block dimension
-	dim3 gridSize((dataSize + blockSize.x - 1) / blockSize.x);
+	dim3 gridSize((unsigned int)((dataSize + blockSize.x - 1) / blockSize.x));
 
 	// Then we account also for unrolling factor, since our data length might not be a power of two
 	gridSize.x = (gridSize.x + unrollingFactor - 1) / unrollingFactor;
@@ -122,13 +123,13 @@ __global__ void Matrix2Vector(const float* matrix, const float* vector, float* d
 	float alpha = negate ? -1.0f : 1.0f;
 	float data = 0.0f;
 #pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
+	for (int i = 0; i < unrollFactor; i++)
 	{
 		size_t vOffset = idx + i * blockDim.x;
 		float mat = vOffset < width ? matrix[row * width + vOffset] : 0.0f;
 		float vec = vOffset < width ? vector[vOffset] : 0.0f;
 
-		data += (dicInv * interm);
+		data += (mat * vec);
 		// There is the MultAdd intrinsic but it seems to make no difference, nor in debug mode nor in release
 		// Maybe the compiler it's already efficient in generating this code
 		//data = fmaf(mat, vec, data);
@@ -137,7 +138,7 @@ __global__ void Matrix2Vector(const float* matrix, const float* vector, float* d
 	// After the multiplication, each thread will hold it's own sum, and we can apply our beloved reduction
 	KernelReduce<float*, float>(data, width, [](float* ptr, float a, float sum) {
 		atomicAdd(ptr, a * sum);
-	}, &dest[row], alpha);
+		}, &dest[row], alpha);
 }
 
 /// <summary>
@@ -153,7 +154,7 @@ __global__ void Matrix2Vector(cudaTextureObject_t matrixTex, const float* vector
 	float alpha = negate ? -1.0f : 1.0f;
 	float data = 0.0f;
 #pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
+	for (int i = 0; i < unrollFactor; i++)
 	{
 		size_t vOffset = idx + i * blockDim.x;
 		// With textures, out of bound reads are automatically "handled"
@@ -198,9 +199,10 @@ __global__ void SquareSumKrnlUnroll(const float* vec, size_t size, float* result
 
 	float data = 0.0f;
 #pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
+	for (int i = 0; i < unrollFactor; i++)
 	{
-		float d = (idx + i * blockDim.x) < size ? vec[idx + i * blockDim.x] : 0.0f;
+		size_t offset = idx + i * blockDim.x;
+		float d = offset < size ? vec[offset] : 0.0f;
 		data += (d * d);
 	}
 
@@ -210,20 +212,25 @@ __global__ void SquareSumKrnlUnroll(const float* vec, size_t size, float* result
 }
 
 template <int unrollFactor>
-__global__ void SquareSumKrnlUnrollLdg(const float* vec, size_t size, float* result) {
+__global__ void SquareSumGridUnroll(const float* vec, size_t size, float* result) {
 	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 
 	// We calculate the squared value. We maintain the entire warp active but if we are out of bounds we
 	// use zero as data value. In this way no sum error are introduced in the final sums
 
 	float data = 0.0f;
+	size_t offset = idx;
+	while (offset < size) {
 #pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		// For our application, most of the access should be aligned and coalesced (we have no by column reads)
-		// so readonly cache does not make much difference
-		float d = (idx + i * blockDim.x) < size ? __ldg(&vec[idx + i * blockDim.x]) : 0.0f;
-		data += (d * d);
+		for (int i = 0; i < unrollFactor; i++)
+		{
+			// For our application, most of the access should be aligned and coalesced (we have no by column reads)
+			// so readonly cache does not make much difference
+			float d = (offset + i * blockDim.x ) < size ? vec[offset + i * blockDim.x] : 0.0f;
+			data += (d * d);
+		}
+
+		offset += gridDim.x * unrollFactor * blockDim.x;
 	}
 
 	KernelReduce<float*>(data, size, [](float* result, float data) {
@@ -240,10 +247,31 @@ __global__ void SquareDiffSumKrnlUnroll(const float* vec1, const float* vec2, si
 
 	float data = 0.0f;
 #pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
+	for (int i = 0; i < unrollFactor; i++)
 	{
 		size_t vOffset = idx + i * blockDim.x;
 		float d = vOffset < size ? vec1[vOffset] - vec2[vOffset] : 0.0f;
+		data += (d * d);
+	}
+
+	KernelReduce<float*>(data, size, [](float* result, float data) {
+		atomicAdd(result, data);
+		}, result);
+}
+
+template <int unrollFactor>
+__global__ void SquareDiffSumKrnlUnrollLdg(const float* vec1, const float* vec2, size_t size, float* result) {
+	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
+
+	// We calculate the squared value. We maintain the entire warp active but if we are out of bounds we
+	// use zero as data value. In this way no sum error are introduced in the final sums
+
+	float data = 0.0f;
+#pragma unroll
+	for (int i = 0; i < unrollFactor; i++)
+	{
+		size_t vOffset = idx + i * blockDim.x;
+		float d = vOffset < size ? __ldcs(&vec1[vOffset]) - __ldcs(&vec2[vOffset]) : 0.0f;
 		data += (d * d);
 	}
 
@@ -267,6 +295,10 @@ __global__ void ThresholdVector(float* vector, size_t size) {
 			// Little optimization here: if the data is already zero, we can avoid a memory write. This may
 			// improve the performance in the final stages of the algorithm where most of the solution elements are 0
 			float data = vector[vOffset];
+
+			// NB: Threshold may be a parameter read by constant memory here
+			// For our application, an hard coded may be an optimization since the value
+			// should not change "frequently" depending on the application
 			if (data != 0.0f && fabs(data) < 1e-4f)
 				vector[vOffset] = 0.0f;
 		}

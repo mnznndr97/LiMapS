@@ -8,21 +8,16 @@
 #include "threshold_kernels.cuh"
 
 
-__global__ void Fill(float* data, size_t size) {
+__global__ void Fill(float* data, size_t size, float val = 1.0f) {
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	if (index < size) {
-		data[index] = 1.0f;
+		data[index] = val;
 	}
 }
 
 void RunCopyBenchmarks(size_t dataSize) {
 	cuda_ptr<float> source = make_cuda<float>(dataSize);
 	cuda_ptr<float> dest = make_cuda<float>(dataSize);
-
-	cublasHandle_t cublasHandle;
-	/*CUBLAS_CHECK(cublasCreate(&cublasHandle));
-	cublasScopy(cublasHandle, dataSize * sizeof(float), source.get(), 1, dest.get(), 1);
-	CUBLAS_CHECK(cublasDestroy(cublasHandle));*/
 
 	dim3 blockSize(128);
 	CopyTo<8> << <GetGridSize(blockSize, dataSize, 8), blockSize >> > (source.get(), dataSize, dest.get(), false);
@@ -33,17 +28,15 @@ void RunThresholdBenchmarks(size_t dataSize) {
 	cuda_ptr<float> data = make_cuda<float>(dataSize);
 
 	dim3 blockSize(256);
-	dim3 gridSize((dataSize + blockSize.x - 1) / blockSize.x);
 	cudaMemset(data.get(), 0, dataSize * sizeof(float));
 
 	std::cout << "Starting thresold kernel comparison benchmarks" << std::endl;
 
 	blockSize.x = 32;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	ThresholdVector<1> << <gridSize, blockSize.x >> > (data.get(), dataSize);
+	ThresholdVector<1> << <GetGridSize(blockSize, dataSize), blockSize.x >> > (data.get(), dataSize);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
-	ThresholdVectorAlwaysWrite<1> << <gridSize, blockSize.x >> > (data.get(), dataSize);
+	ThresholdVectorAlwaysWrite<1> << <GetGridSize(blockSize, dataSize), blockSize.x >> > (data.get(), dataSize);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	ThresholdVector<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x >> > (data.get(), dataSize);
@@ -64,8 +57,7 @@ void RunNormBenchmarks(size_t dataSize) {
 	cuda_ptr<float> data = make_cuda<float>(dataSize);
 
 	dim3 blockSize(256);
-	dim3 gridSize((dataSize + blockSize.x - 1) / blockSize.x);
-	Fill << <gridSize, blockSize.x >> > (data.get(), dataSize);
+	Fill << <GetGridSize(blockSize, dataSize), blockSize.x >> > (data.get(), dataSize);
 
 	float norm = 0.0f;
 	std::cout << "Starting NORM kernel comparison benchmarks" << std::endl;
@@ -79,8 +71,7 @@ void RunNormBenchmarks(size_t dataSize) {
 	cuda_ptr<float> deviceNorm = make_cuda<float>(1);
 
 	blockSize.x = 32;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	SquareSumKrnl << <gridSize, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnl << <GetGridSize(blockSize, dataSize), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	cudaMemcpy(&norm, deviceNorm.get(), sizeof(float), cudaMemcpyDeviceToHost);
@@ -88,25 +79,23 @@ void RunNormBenchmarks(size_t dataSize) {
 	std::cout << "Norm from kernel: " << norm << std::endl;
 
 	blockSize.x = 64;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	SquareSumKrnl << <gridSize.x, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnl << <GetGridSize(blockSize, dataSize), blockSize, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	blockSize.x = 128;
-	SquareSumKrnl << <gridSize.x, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnl << <GetGridSize(blockSize, dataSize), blockSize, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	blockSize.x = 256;
-	SquareSumKrnl << <gridSize.x, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnl << <GetGridSize(blockSize, dataSize), blockSize, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 
 	// 2-reduction kernels
-	cudaMemset(deviceNorm.get(), CUBLAS_GEMM_ALGO0, sizeof(float));
+	cudaMemset(deviceNorm.get(), 0, sizeof(float));
 
 	blockSize.x = 32;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	SquareSumKrnlUnroll<2> << <(gridSize.x + 1) / 2, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnroll<2> << <GetGridSize(blockSize, dataSize, 2), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	cudaMemcpy(&norm, deviceNorm.get(), sizeof(float), cudaMemcpyDeviceToHost);
@@ -114,25 +103,22 @@ void RunNormBenchmarks(size_t dataSize) {
 	std::cout << "Norm from kernel 2: " << norm << std::endl;
 
 	blockSize.x = 64;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	SquareSumKrnlUnroll<2> << <(gridSize.x + 1) / 2, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnroll<2> << <GetGridSize(blockSize, dataSize, 2), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	blockSize.x = 128;
-	SquareSumKrnlUnroll<2> << <(gridSize.x + 1) / 2, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnroll<2> << <GetGridSize(blockSize, dataSize, 2), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	blockSize.x = 256;
-	SquareSumKrnlUnroll<2> << <(gridSize.x + 1) / 2, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnroll<2> << <GetGridSize(blockSize, dataSize, 2), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	// 8-reduction kernels
-	cudaMemset(deviceNorm.get(), CUBLAS_GEMM_ALGO0, sizeof(float));
+	cudaMemset(deviceNorm.get(), 0, sizeof(float));
 
 	blockSize.x = 64;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	gridSize.x = (gridSize.x + 7) / 8;
-	SquareSumKrnlUnroll<8> << <gridSize.x, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnroll<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	cudaMemcpy(&norm, deviceNorm.get(), sizeof(float), cudaMemcpyDeviceToHost);
@@ -140,24 +126,18 @@ void RunNormBenchmarks(size_t dataSize) {
 	std::cout << "Norm from kernel 8: " << norm << std::endl;
 
 	blockSize.x = 128;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	gridSize.x = (gridSize.x + 7) / 8;
-	SquareSumKrnlUnroll<8> << <gridSize.x, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnroll<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	blockSize.x = 256;
-	gridSize.x = (dataSize + blockSize.x - 1) / blockSize.x;
-	gridSize.x = (gridSize.x + 7) / 8;
-	SquareSumKrnlUnroll<8> << <gridSize.x, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumKrnlUnroll<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
-
-
 	// 16-reduction with cache kernels
-	cudaMemset(deviceNorm.get(), CUBLAS_GEMM_ALGO0, sizeof(float));
+	cudaMemset(deviceNorm.get(), 0, sizeof(float));
 
 	blockSize.x = 128;
-	SquareSumKrnlUnrollLdg<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumGridUnroll<8> << <80, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	cudaMemcpy(&norm, deviceNorm.get(), sizeof(float), cudaMemcpyDeviceToHost);
@@ -165,13 +145,64 @@ void RunNormBenchmarks(size_t dataSize) {
 	std::cout << "Norm from kernel 8 - ldg: " << norm << std::endl;
 
 	blockSize.x = 256;
-	SquareSumKrnlUnrollLdg<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumGridUnroll<8> << <80, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	blockSize.x = 512;
-	SquareSumKrnlUnrollLdg<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
+	SquareSumGridUnroll<8> << <80, blockSize.x, blockSize.x / 32 >> > (data.get(), dataSize, deviceNorm.get());
 	CUDA_CHECK(cudaDeviceSynchronize());
 }
+
+void RunNormDiffBenchmarks(size_t dataSize) {
+	cuda_ptr<float> data2 = make_cuda<float>(dataSize);
+	cuda_ptr<float> data = make_cuda<float>(dataSize);
+
+	dim3 blockSize(256);
+	dim3 gridSize((dataSize + blockSize.x - 1) / blockSize.x);
+	Fill << <gridSize, blockSize.x >> > (data.get(), dataSize);
+	Fill << <gridSize, blockSize.x >> > (data2.get(), dataSize, 2.0f);
+
+	cuda_ptr<float> deviceNorm = make_cuda<float>(1);
+	cudaMemset(deviceNorm.get(), 0, sizeof(float));
+
+	// 8-reduction kernels
+	blockSize.x = 64;
+	SquareDiffSumKrnlUnroll<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data2.get(), data.get(), dataSize, deviceNorm.get());
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	float norm = 0.0f;
+	cudaMemcpy(&norm, deviceNorm.get(), sizeof(float), cudaMemcpyDeviceToHost);
+	norm = sqrt(norm);
+	std::cout << "NormDiff from kernel 8: " << norm << std::endl;
+
+	blockSize.x = 128;
+	SquareDiffSumKrnlUnroll<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data2.get(), data.get(), dataSize, deviceNorm.get());
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	blockSize.x = 256;
+	SquareDiffSumKrnlUnroll<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data2.get(), data.get(), dataSize, deviceNorm.get());
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	// Cache streaming kernels
+	cudaMemset(deviceNorm.get(), 0, sizeof(float));
+
+	blockSize.x = 128;
+	SquareDiffSumKrnlUnrollLdg<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data2.get(), data.get(), dataSize, deviceNorm.get());
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	cudaMemcpy(&norm, deviceNorm.get(), sizeof(float), cudaMemcpyDeviceToHost);
+	norm = sqrt(norm);
+	std::cout << "NormDiff from kernel 8 - ldg: " << norm << std::endl;
+
+	blockSize.x = 256;
+	SquareDiffSumKrnlUnrollLdg<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data2.get(), data.get(), dataSize, deviceNorm.get());
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	blockSize.x = 512;
+	SquareDiffSumKrnlUnrollLdg<8> << <GetGridSize(blockSize, dataSize, 8), blockSize.x, blockSize.x / 32 >> > (data2.get(), data.get(), dataSize, deviceNorm.get());
+	CUDA_CHECK(cudaDeviceSynchronize());
+}
+
 
 void RunKernelsBenchmarks() {
 	std::cout << "Starting benchmarks" << std::endl;

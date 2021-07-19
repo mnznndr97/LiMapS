@@ -203,10 +203,15 @@ DeviceLiMapSv2::DeviceLiMapSv2(const float* solution, const float* signal, const
 
 void DeviceLiMapSv2::Execute(int iterations)
 {
+	// We lanuch the memory copies asyncronously here and then we wait on the sync point and the end of the function
+	// In this way we first enqueue all the work on the NULL stream and then we waiting, minimizing the "wasted" time in CPU-GPU
+	// command execution
 	CUDA_CHECK(cudaMemcpyAsync(_signalPtr.get(), _signalHost, sizeof(float) * _signalSize, cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpyAsync(_dictionaryInversePtr.get(), _dictionaryInverseHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpyAsync(_dictionaryPtr.get(), _dictionaryHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 
+	// LiMapS kernel will dynamically launch its own kernels. So only one thread is necessary
+	// By doing this, we can erase the CPU-GPU communication time for launching kernels
 	LiMapS << < 1, 1 >> > (_dictionaryWords, _signalSize);
 
 	CUDA_CHECK(cudaMemcpyAsync(_alphaH.data(), _alphaPtr.get(), sizeof(float) * _dictionaryWords, cudaMemcpyDeviceToHost));

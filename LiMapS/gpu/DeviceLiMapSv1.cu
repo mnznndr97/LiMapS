@@ -4,21 +4,20 @@
 #include "kernels.cuh"
 #include "threshold_kernels.cuh"
 
-DeviceLiMapSv1::DeviceLiMapSv1(std::vector<float>& solution, std::vector<float>& signal, std::vector<float>& D, std::vector<float>& DINV)
-	:_signalSize(signal.size()), _dictionaryWords(solution.size()),
-	// To avoid C++ vector copies, let's just store the vector references for our input data. This may be dangerous since the class MUST have the same (or shorted)
-	// scope of our data, but for our purposes should be ok
-	_hostSolution(solution), _hostSignal(signal), _hostDictionary(D), _hostDictionaryInverse(DINV)
+DeviceLiMapSv1::DeviceLiMapSv1(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize)
+	: BaseLiMapS(solution, signal, D, DINV, dictionaryWords, signalSize)
 {
 	CUBLAS_CHECK(cublasCreate(&_cublasHandle));
 
-	_solution = make_cuda<float>(solution.size());
-	_signal = make_cuda<float>(signal.size());
-	_dictionary = make_cuda<float>(D.size());
-	_dictionaryInverse = make_cuda<float>(DINV.size());
+	_alphaH.resize(_dictionaryWords);
 
-	_alpha = make_cuda<float>(solution.size());
-	_alphaNew = make_cuda<float>(solution.size());
+	_solution = make_cuda<float>(_dictionaryWords);
+	_signal = make_cuda<float>(_signalSize);
+	_dictionary = make_cuda<float>(_dictionaryWords * _signalSize);
+	_dictionaryInverse = make_cuda<float>(_dictionaryWords * _signalSize);
+
+	_alpha = make_cuda<float>(_dictionaryWords);
+	_alphaNew = make_cuda<float>(_dictionaryWords);
 
 }
 
@@ -29,9 +28,9 @@ DeviceLiMapSv1::~DeviceLiMapSv1()
 
 void DeviceLiMapSv1::Execute(int iterations)
 {
-	CUBLAS_CHECK(cublasSetVector(_signalSize, sizeof(float), _hostSignal.data(), 1, _signal.get(), 1));
-	CUDA_CHECK(cudaMemcpy(_dictionaryInverse.get(), _hostDictionaryInverse.data(), sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
-	CUDA_CHECK(cudaMemcpy(_dictionary.get(), _hostDictionary.data(), sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
+	CUBLAS_CHECK(cublasSetVector(_signalSize, sizeof(float), _signalHost, 1, _signal.get(), 1));
+	CUDA_CHECK(cudaMemcpy(_dictionaryInverse.get(), _dictionaryInverseHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(_dictionary.get(), _dictionaryHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 
 	const float alphaScalar = 1.0f;
 	const float negAlphaScalar = -1.0f;
@@ -65,7 +64,7 @@ void DeviceLiMapSv1::Execute(int iterations)
 		CUBLAS_CHECK(cublasSscal(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1));
 
 		ThresholdKrnl << <gridSize, blockSize >> > (_alpha.get(), _dictionaryWords, _alphaElementTh);
-		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1, _alphaNew.get(), 1));		
+		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1, _alphaNew.get(), 1));
 
 		lambda = lambda * gamma;
 
@@ -76,4 +75,8 @@ void DeviceLiMapSv1::Execute(int iterations)
 			break;
 		}
 	}
+
+	printf("CuBlas iterations: %d\n", iteration);
+	CUDA_CHECK(cudaMemcpy(_alphaH.data(), _alpha.get(), sizeof(float) * _dictionaryWords, cudaMemcpyDeviceToHost));
+
 }

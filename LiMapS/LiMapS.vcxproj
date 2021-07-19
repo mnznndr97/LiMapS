@@ -66,6 +66,7 @@
       <GenerateLineInfo>false</GenerateLineInfo>
       <PtxAsOptionV>true</PtxAsOptionV>
       <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
+      <AdditionalOptions>-Wno-deprecated-gpu-targets %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -90,6 +91,9 @@
       <PtxAsOptionV>true</PtxAsOptionV>
       <GenerateRelocatableDeviceCode>true</GenerateRelocatableDeviceCode>
       <GPUDebugInfo>false</GPUDebugInfo>
+      <AdditionalCompilerOptions>
+      </AdditionalCompilerOptions>
+      <AdditionalOptions>-Wno-deprecated-gpu-targets %(AdditionalOptions)</AdditionalOptions>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>

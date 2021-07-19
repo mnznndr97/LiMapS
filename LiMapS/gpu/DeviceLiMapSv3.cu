@@ -219,10 +219,15 @@ void DeviceLiMapSv3::Execute(int iterations)
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);
 
+	// We lanuch the memory copies asyncronously here and then we wait on the sync point and the end of the function
+	// In this way we first enqueue all the work on the NULL stream and then we waiting, minimizing the "wasted" time in CPU-GPU
+	// command execution
 	CUDA_CHECK(cudaMemcpyAsync(_signalPtr.get(), _signalHost, sizeof(float) * _signalSize, cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpyAsync(_dictionaryInversePtr.get(), _dictionaryInverseHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 	CUDA_CHECK(cudaMemcpyAsync(_dictionaryPtr.get(), _dictionaryHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 
+	// LiMapS kernel will dynamically launch its own kernels. So only one thread is necessary
+	// By doing this, we can erase the CPU-GPU communication time for launching kernels
 	cudaEventRecord(start);
 	LiMapS2 << < 1, 1 >> > (_dictionaryWords, _signalSize);
 	cudaEventRecord(stop);
@@ -230,6 +235,7 @@ void DeviceLiMapSv3::Execute(int iterations)
 	CUDA_CHECK(cudaMemcpyAsync(_alphaH.data(), _alphaPtr.get(), sizeof(float) * _dictionaryWords, cudaMemcpyDeviceToHost));
 	CUDA_CHECK(cudaDeviceSynchronize());
 
+	// Let's just also measure the kernel exec time to see the mem copies/sync overhead
 	float ms;
 	cudaEventElapsedTime(&ms, start, stop);
 	std::cout << "Event elapsed: " << ms << " ms" << std::endl;
