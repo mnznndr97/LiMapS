@@ -190,6 +190,9 @@ int main(int argn, char** argc)
 	const int signalSize = 200;
 	const int dictionaryWords = 800;
 
+	/*const int signalSize = 200;
+	const int dictionaryWords = 800;*/
+
 	// We may use some async CUDA memories operation so better to declare our pointer as non-paginable memory
 	float* actualSolution;
 	float* signal;
@@ -217,13 +220,15 @@ int main(int argn, char** argc)
 	const int maxIterations = 1000;
 
 
-	RunLiMapSOnCPU(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+	//RunLiMapSOnCPU(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
+#if NDEBUG
 	RunLiMapSOnCuBlas(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+#endif
 
-	RunBaseLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+	//RunBaseLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 	RunImprovedLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
-	RunTexLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+	//RunTexLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
 	/* ----- Cleanup ----- */
 

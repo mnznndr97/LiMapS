@@ -61,30 +61,29 @@ __global__ void GetAlphaImprv(size_t dictionaryWords, size_t signalSize) {
 		}, &_alphaD[idy], &_alphaNewD[idy]);
 }
 
-__global__ void CalculateBetaStep2(float lambda, size_t dictionaryWords, size_t signalSize) {
-	cg::grid_group grid = cg::this_grid();
+template<int unrollFactor>
+__global__ void CalculateBetaStepImpr(float lambda, size_t dictionaryWords, size_t signalSize) {
+	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 
-	unsigned long long index = grid.thread_rank();
-	if (index >= dictionaryWords) {
-		// Our thread is out of range
-		return;
+#pragma unroll
+	for (int i = 0; i < unrollFactor; i++) {
+		size_t index = i * blockDim.x + idx;
+
+		if (index < dictionaryWords)
+			_beta[index] = GetBeta(lambda, _alphaD[index]);
 	}
-
-	_beta[index] = GetBeta(lambda, _alphaD[index]);
 }
 
 __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
-
-	// Handle to thread block group
-	cg::grid_group grid = cg::this_grid();
-
-
 	// 1) The first step of the LiMapS algorithm is to calculate the starting lamba coefficient. In order to do so, we need to calculate
 	// the signal norm. So we enqueue on the default stream the SquareSum operation and then we wait for it.
 	// The norm is foundamental for the next steps so there is nothing that we can do to avoid the sync time waste
 	_signalSquareSum = 0.0f;
 	dim3 blocks(128);
-	SquareSumKrnlUnroll<8> << <GetGridSize(blocks, signalSize, 8), blocks, blocks.x / warpSize >> > (_signalD, signalSize, &_signalSquareSum);
+	dim3 red8DicGridSize = GetGridSize(blocks, dictionaryWords, 8);
+	dim3 red8SignalGridSize = GetGridSize(blocks, signalSize, 8);
+
+	SquareSumKrnlUnroll<8> << <red8SignalGridSize, blocks, blocks.x / warpSize >> > (_signalD, signalSize, &_signalSquareSum);
 	CUDA_CHECKD(cudaDeviceSynchronize());
 
 	assert(_signalSquareSum >= 0.0f);
@@ -95,7 +94,7 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 	_beta = new float[dictionaryWords];
 	_intermD = new float[signalSize];
 
-	blocks.x = 128;
+
 	// 2) The second step of the algorithm is to prepare the starting alpha vector so also here we 
 	// Launch the kernel calculation and we synchronize the device
 
@@ -103,7 +102,8 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 	//FillZero<1> << <gridSize, blocks >> > (_alphaD, dictionaryWords);
 	//FillZero<1> << <gridSize, blocks >> > (_alphaOldD, dictionaryWords);
 
-	dim3 gridSize = GetGridSize(blocks, signalSize, 8);
+
+	dim3 gridSize = red8SignalGridSize;
 	gridSize.y = dictionaryWords;
 	int sharedMemSize = blocks.x / warpSize;
 	GetAlphaImprv<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
@@ -124,47 +124,40 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 		// In this way, the work is executed with all data dependencies respected
 
 		// 3.1) We need to compute the beta vector for this iterarion
-		blocks.x = 128;
-		CalculateBetaStep2 << <GetGridSize(blocks, dictionaryWords), blocks, 0 >> > (lambda, dictionaryWords, signalSize);
+		CalculateBetaStepImpr<8> << <red8DicGridSize, blocks, 0 >> > (lambda, dictionaryWords, signalSize);
 
 		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
-		blocks.x = 128;
-		CopyTo<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks, 0 >> > (_signalD, signalSize, _intermD, true);
+		CopyTo<8> << <red8SignalGridSize, blocks, 0 >> > (_signalD, signalSize, _intermD, true);
 
-		blocks.x = 64;
-		gridSize = GetGridSize(blocks, dictionaryWords, 8);
+		gridSize = red8DicGridSize;
+		//gridSize.x = 80;
 		gridSize.y = signalSize;
 		int sharedMemSize = blocks.x / warpSize;
-		Matrix2Vector<8> << <gridSize, blocks, sharedMemSize >> > (_dictionaryD, _beta, _intermD, dictionaryWords, signalSize, false);
-		//CalculateIntermStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
+		Matrix2Vector<8, false> << <gridSize, blocks, sharedMemSize >> > (_dictionaryD, _beta, _intermD, dictionaryWords, signalSize);
 		CUDA_CHECKD(cudaPeekAtLastError());
 
 		// 3.3) We compute the new alpha with the thresholding at the end
-		blocks.x = 128;
-		CopyTo<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks, 0 >> > (_beta, dictionaryWords, _alphaNewD, false);
+		CopyTo<8> << <red8DicGridSize, blocks, 0 >> > (_beta, dictionaryWords, _alphaNewD, false);
 
-		blocks.x = 128;
 		blocks.y = 1;
-		gridSize = GetGridSize(blocks, signalSize, 8);
-		gridSize.y = (dictionaryWords + 7) / 8;
+		gridSize = red8SignalGridSize;
+		//gridSize.x = 80;
+		gridSize.y = (dictionaryWords + 1) / 2;
 		gridSize.y = dictionaryWords;
 		sharedMemSize = blocks.x / warpSize;
-		Matrix2Vector<8> << <gridSize, blocks, sharedMemSize >> > (_dictionaryInverseD, _intermD, _alphaNewD, signalSize, dictionaryWords, true);
+		Matrix2Vector<8, true> << <gridSize, blocks, sharedMemSize >> > (_dictionaryInverseD, _intermD, _alphaNewD, signalSize, dictionaryWords);
 		CUDA_CHECKD(cudaPeekAtLastError());
-
-		//CalculateNewAlphaStep2<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
 
 		// NB: Benchmarks says that 128 threads per block should result in the best occupancy for the
 		// threshold kernel
-		blocks.x = 128;
 		blocks.y = 1;
-		ThresholdVector<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaNewD, dictionaryWords);
+		ThresholdVector<8> << <red8DicGridSize, blocks >> > (_alphaNewD, dictionaryWords);
 
 		lambda = 1.01f * lambda;
 
 		// 3.4) We see how much alpha is changed
 		_alphaDiffSquareSum = 0.0f;
-		SquareDiffSumKrnlUnroll<8> << <GetGridSize(blocks, dictionaryWords, 8), blocks >> > (_alphaNewD, _alphaD, dictionaryWords, &_alphaDiffSquareSum);
+		SquareDiffSumKrnlUnroll<8> << <red8DicGridSize, blocks >> > (_alphaNewD, _alphaD, dictionaryWords, &_alphaDiffSquareSum);
 		CUDA_CHECKD(cudaDeviceSynchronize());
 
 		float norm = sqrtf(_alphaDiffSquareSum);

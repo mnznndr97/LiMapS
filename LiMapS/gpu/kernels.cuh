@@ -75,7 +75,7 @@ __inline__ __host__ __device__ dim3 GetGridSize(const dim3& blockSize, size_t da
 }
 
 template <typename... Arguments>
-__device__ void KernelReduce(float data, size_t size, nvstd::function<void(Arguments..., float)> sumCallback, Arguments... args) {
+__device__ void KernelReduce(float data, size_t size, const nvstd::function<void(Arguments..., float)>&& sumCallback, Arguments... args) {
 	extern __shared__ float blockParSums[];
 
 	int warpLane = threadIdx.x % warpSize;
@@ -93,7 +93,6 @@ __device__ void KernelReduce(float data, size_t size, nvstd::function<void(Argum
 		blockParSums[warpIndex] = warpSum;
 	}
 
-	if (idx >= size) return;
 	__syncthreads();
 
 	// After the sync point, we can use the first threads (up to shared mem size), to load and sum toghether the 
@@ -111,8 +110,8 @@ __device__ void KernelReduce(float data, size_t size, nvstd::function<void(Argum
 /// <summary>
 /// Performs a matrix to vector moltiplication
 /// </summary>
-template<int unrollFactor>
-__global__ void Matrix2Vector(const float* matrix, const float* vector, float* dest, size_t width, size_t height, bool negate) {
+template<int unrollFactor, bool negate>
+__global__ void Matrix2Vector(const float* matrix, const float* vector, float* dest, size_t width, size_t height) {
 	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 	size_t row = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -122,18 +121,32 @@ __global__ void Matrix2Vector(const float* matrix, const float* vector, float* d
 	// We now have to perform a single (also considering unrolling) row * col item multiplication
 	float alpha = negate ? -1.0f : 1.0f;
 	float data = 0.0f;
+
+	//size_t offset = idx;
+	//while (offset < width) {
+
 #pragma unroll
 	for (int i = 0; i < unrollFactor; i++)
 	{
-		size_t vOffset = idx + i * blockDim.x;
-		float mat = vOffset < width ? matrix[row * width + vOffset] : 0.0f;
-		float vec = vOffset < width ? vector[vOffset] : 0.0f;
+		size_t index = idx + i * blockDim.x;
 
-		data += (mat * vec);
+		// Very micro optimization here: we compute only a single branch and we do the fma only
+		// if we are in the data bounds.
+		if (index < width) {
+			data += matrix[row * width + index] * vector[index];
+		}
+
+		/*float mat = vOffset < width ? &matrix[row * width + vOffset] : 0.0f;
+		float vec = vOffset < width ? &vector[vOffset] : 0.0f;
+
+		data += (mat * vec);*/
 		// There is the MultAdd intrinsic but it seems to make no difference, nor in debug mode nor in release
 		// Maybe the compiler it's already efficient in generating this code
 		//data = fmaf(mat, vec, data);
 	}
+
+	//	offset += gridDim.x * unrollFactor * blockDim.x;
+	//}
 
 	// After the multiplication, each thread will hold it's own sum, and we can apply our beloved reduction
 	KernelReduce<float*, float>(data, width, [](float* ptr, float a, float sum) {
@@ -226,7 +239,7 @@ __global__ void SquareSumGridUnroll(const float* vec, size_t size, float* result
 		{
 			// For our application, most of the access should be aligned and coalesced (we have no by column reads)
 			// so readonly cache does not make much difference
-			float d = (offset + i * blockDim.x ) < size ? vec[offset + i * blockDim.x] : 0.0f;
+			float d = (offset + i * blockDim.x) < size ? vec[offset + i * blockDim.x] : 0.0f;
 			data += (d * d);
 		}
 
