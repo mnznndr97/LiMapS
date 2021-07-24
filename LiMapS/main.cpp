@@ -183,6 +183,11 @@ int main(int argn, char** argc)
 
 		return 0;
 	}
+	else if (argn > 1 && strcmp(argc[1], "mv-benchmark") == 0) {
+		RunMatrixVectorBenchmarks(atoi(argc[2]));
+
+		return 0;
+	}
 
 	std::cout.precision(std::numeric_limits<float>::max_digits10);
 	std::cout << " *** LiMapS Implementation ***" << std::endl;
