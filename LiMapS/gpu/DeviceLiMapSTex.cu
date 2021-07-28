@@ -7,7 +7,6 @@
 #include "cublas_shared.h"
 
 #include "kernels.cuh"
-#include "threshold_kernels.cuh"
 
 
 

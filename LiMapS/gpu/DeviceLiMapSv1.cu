@@ -2,7 +2,6 @@
 
 #include "cublas_shared.h"
 #include "kernels.cuh"
-#include "threshold_kernels.cuh"
 
 DeviceLiMapSv1::DeviceLiMapSv1(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize)
 	: BaseLiMapS(solution, signal, D, DINV, dictionaryWords, signalSize)
@@ -53,7 +52,7 @@ void DeviceLiMapSv1::Execute(int iterations)
 		// First we save the current alpha as the old one, in order to use it later
 		CUBLAS_CHECK(cublasScopy(_cublasHandle, _dictionaryWords, _alpha.get(), 1, _alphaNew.get(), 1));
 
-		GetBetaKrnl << <gridSize, blockSize >> > (lambda, _alpha.get(), beta.get(), _dictionaryWords);
+		CalculateBeta<1> << <gridSize, blockSize >> > (_alpha.get(), beta.get(), lambda, _dictionaryWords);
 
 		CUBLAS_CHECK(cublasSgemv(_cublasHandle, CUBLAS_OP_T, _dictionaryWords, _signalSize, &alphaScalar, _dictionary.get(), _dictionaryWords, beta.get(), 1, &betaScalar, interm.get(), 1));
 		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _signalSize, &negAlphaScalar, _signal.get(), 1, interm.get(), 1));
@@ -63,7 +62,7 @@ void DeviceLiMapSv1::Execute(int iterations)
 		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _dictionaryWords, &negAlphaScalar, beta.get(), 1, _alpha.get(), 1));
 		CUBLAS_CHECK(cublasSscal(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1));
 
-		ThresholdKrnl << <gridSize, blockSize >> > (_alpha.get(), _dictionaryWords, _alphaElementTh);
+		ThresholdVector<8> << <GetGridSize(blockSize, _dictionaryWords), blockSize >> > (_alpha.get(), _dictionaryWords);
 		CUBLAS_CHECK(cublasSaxpy(_cublasHandle, _dictionaryWords, &negAlphaScalar, _alpha.get(), 1, _alphaNew.get(), 1));
 
 		lambda = lambda * gamma;

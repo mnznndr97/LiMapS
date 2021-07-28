@@ -7,6 +7,11 @@
 #define TILE_DIM    16
 #define BLOCK_ROWS  16
 
+__inline__ __device__ float GetBeta(float lambda, float data)
+{
+	return data * (1.0f - expf(-lambda * fabs(data)));
+}
+
 /// <summary>
 /// Copies a vector of floats to another, optionally negating the values
 /// </summary>
@@ -24,11 +29,18 @@ __global__ void CopyTo(const float* source, size_t size, float* dest, bool negat
 	}
 }
 
-__inline__ __device__ float GetBeta(float lambda, float data) {
-	return data * (1.0f - expf(-lambda * fabs(data)));
-}
+template<int unrollFactor>
+__global__ void CalculateBeta(const float* __restrict__ alpha, float* beta, float lambda, size_t dictionaryWords) {
+	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 
-__global__ void GetBetaKrnl(float lambda, const float* data, float* beta, size_t size);
+#pragma unroll
+	for (int i = 0; i < unrollFactor; i++) {
+		size_t index = i * blockDim.x + idx;
+
+		if (index < dictionaryWords)
+			beta[index] = GetBeta(lambda, alpha[index]);
+	}
+}
 
 /// <summary>
 /// Calculates the necessary grid x dimension considering the data size and the unrolling factor
@@ -160,30 +172,38 @@ __global__ void Matrix2Vector(const float* matrix, const float* vector, float* d
 /// Performs a matrix to vector moltiplication
 /// </summary>
 /// <remarks>
-/// Cannot use nvstd::function here. Back to templates :)
+/// Cannot use nvstd::function here, since the relative copy constructor cannot be compiled correctly by the nvcc when used in a kernel.
+/// So let's go back to the old templates :)
 /// </remarks>
 template<typename T, typename... Arguments>
-__global__ void Matrix2Vector3(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height, T sumCallback, Arguments... args) {
+__global__ void Matrix2Vector2(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height, T sumCallback, Arguments... args) {
 	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 
 	float sum = 0.0f;
-	// We iterate over block size to reach width
+	// We iterate over block size to reach width. We iterate in blocks of a size of a warp
+	// In this way vector items are read one time in a single transaction for each warp
+	// NB: each thread is executing the operations, even if it is operating with an out-of-bound index;
+	// in this case the value calculated will always be 0.0f
 	for (size_t i = 0; i < ((width + warpSize - 1) / warpSize); i++)
 	{
 		size_t base = i * warpSize;
 		size_t index = base + (threadIdx.x % warpSize);
+
+		// Vector read: each thread in the warp reads it own items, contiguous to the others
 		float data = index < width ? vector[index] : 0.0f;
 
+		// After data read, each thread in the warp shares the vector value with the other threads to calculare the sum
 #pragma unroll
 		for (int w = 0; w < warpSize; w++)
 		{
 			float vectorData = __shfl_sync(FULL_MASK, data, w);
-			//float matrixData = ((idx < height) && ((base + w) < width)) ? matrix[ idx * width + (base + w)] : 0.0f;
+			// Each thread in the warp is reading the same item but in different rows. So better use a column-major ordering
 			float matrixData = ((idx < height) && ((base + w) < width)) ? matrix[(base + w) * height + idx] : 0.0f;
 			sum += matrixData * vectorData;
 		}
 	}
 
+	// Now if we are in our bound, we invoke the callback
 	if (idx < height) {
 		sumCallback(args..., dest, idx, sum);
 	}

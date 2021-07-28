@@ -7,9 +7,6 @@
 #include "cublas_shared.h"
 
 #include "kernels.cuh"
-#include "threshold_kernels.cuh"
-
-
 
 static __device__ float* _solutionD;
 static __device__ float* _signalD;
@@ -61,19 +58,6 @@ __global__ void GetAlphaImprv(size_t dictionaryWords, size_t signalSize) {
 		}, &_alphaD[idy], &_alphaNewD[idy]);
 }
 
-template<int unrollFactor>
-__global__ void CalculateBetaStepImprv4(float lambda, size_t dictionaryWords, size_t signalSize) {
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-
-#pragma unroll
-	for (int i = 0; i < unrollFactor; i++) {
-		size_t index = i * blockDim.x + idx;
-
-		if (index < dictionaryWords)
-			_beta[index] = GetBeta(lambda, _alphaD[index]);
-	}
-}
-
 __global__ void LiMapS4(size_t dictionaryWords, size_t signalSize) {
 	// 1) The first step of the LiMapS algorithm is to calculate the starting lamba coefficient. In order to do so, we need to calculate
 	// the signal norm. So we enqueue on the default stream the SquareSum operation and then we wait for it.
@@ -99,7 +83,7 @@ __global__ void LiMapS4(size_t dictionaryWords, size_t signalSize) {
 	// 2) The second step of the algorithm is to prepare the starting alpha vector so also here we 
 	// Launch the kernel calculation and we synchronize the device
 
-	Matrix2Vector3 << <dicGridSize, blocks >> > (_dictionaryInverseD, _signalD, _alphaD, signalSize, dictionaryWords, [](float* dest2, float* dest, size_t index, float sum) {
+	Matrix2Vector2 << <dicGridSize, blocks >> > (_dictionaryInverseD, _signalD, _alphaD, signalSize, dictionaryWords, [](float* dest2, float* dest, size_t index, float sum) {
 		dest[index] = sum;
 		dest2[index] = sum;
 		}, _alphaNewD);
@@ -120,15 +104,15 @@ __global__ void LiMapS4(size_t dictionaryWords, size_t signalSize) {
 		// In this way, the work is executed with all data dependencies respected
 
 		// 3.1) We need to compute the beta vector for this iterarion
-		CalculateBetaStepImprv4<8> << <red8DicGridSize, blocks, 0 >> > (lambda, dictionaryWords, signalSize);
+		CalculateBeta<8> << <red8DicGridSize, blocks, 0 >> > (_alphaD, _beta, lambda, dictionaryWords);
 
 		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
-		Matrix2Vector3 << <signalGridSize, blocks >> > (_dictionaryD, _beta, _intermD, dictionaryWords, signalSize, [](float* signal, float* dest, size_t index, float sum) {
+		Matrix2Vector2 << <signalGridSize, blocks >> > (_dictionaryD, _beta, _intermD, dictionaryWords, signalSize, [](float* signal, float* dest, size_t index, float sum) {
 			dest[index] = sum - signal[index];
 			}, _signalD);
 
 		// 3.3) We compute the new alpha with the thresholding at the end
-		Matrix2Vector3 << <dicGridSize, blocks >> > (_dictionaryInverseD, _intermD, _alphaNewD, signalSize, dictionaryWords, [](float* beta, float* dest, size_t index, float sum) {
+		Matrix2Vector2 << <dicGridSize, blocks >> > (_dictionaryInverseD, _intermD, _alphaNewD, signalSize, dictionaryWords, [](float* beta, float* dest, size_t index, float sum) {
 			float data = beta[index] - sum;
 			dest[index] = fabs(data) < 1e-4f ? 0.0f : data;
 			}, _beta);

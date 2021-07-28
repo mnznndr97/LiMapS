@@ -104,7 +104,6 @@
     <CudaCompile Include="gpu\DeviceLiMapSv2.cu" />
     <CudaCompile Include="gpu\DeviceLiMapSv4.cu" />
     <CudaCompile Include="gpu\kernels.cu" />
-    <CudaCompile Include="gpu\threshold_kernels.cu" />
     <CudaCompile Include="main.cpp">
       <FileType>CppCode</FileType>
     </CudaCompile>
@@ -121,7 +120,6 @@
     <ClInclude Include="gpu\DeviceLiMapSv3.cuh" />
     <ClInclude Include="gpu\DeviceLiMapSv4.cuh" />
     <ClInclude Include="gpu\kernels.cuh" />
-    <ClInclude Include="gpu\threshold_kernels.cuh" />
     <ClInclude Include="gpu\cublas_shared.h" />
     <ClInclude Include="gpu\cuda_shared.h" />
     <ClInclude Include="gpu\DeviceLiMapSv1.cuh" />

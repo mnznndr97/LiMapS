@@ -6,9 +6,6 @@
 #include "cublas_shared.h"
 
 #include "kernels.cuh"
-#include "threshold_kernels.cuh"
-
-
 
 static __device__ float* _solutionD;
 static __device__ float* _signalD;
@@ -42,18 +39,6 @@ __global__ void GetAlpha(size_t dictionaryWords, size_t signalSize) {
 	// This avoids us a vector copy later
 	_alphaD[grid.thread_rank()] = sum;
 	_alphaNewD[grid.thread_rank()] = sum;
-}
-
-__global__ void CalculateBetaStep(float lambda, size_t dictionaryWords, size_t signalSize) {
-	cg::grid_group grid = cg::this_grid();
-
-	unsigned long long index = grid.thread_rank();
-	if (index >= dictionaryWords) {
-		// Our thread is out of range
-		return;
-	}
-
-	_beta[index] = GetBeta(lambda, _alphaD[index]);
 }
 
 __global__ void CalculateIntermStep(size_t dictionaryWords, size_t signalSize) {
@@ -139,7 +124,7 @@ __global__ void LiMapS(size_t dictionaryWords, size_t signalSize) {
 
 		// 3.1) We need to compute the beta vector for this iterarion
 		blocks.x = 128;
-		CalculateBetaStep << <GetGridSize(blocks, dictionaryWords), blocks >> > (lambda, dictionaryWords, signalSize);
+		CalculateBeta<1> << <GetGridSize(blocks, dictionaryWords), blocks >> > (_alphaD, _beta, lambda, dictionaryWords);
 
 		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
 		blocks.x = 64;

@@ -11,13 +11,13 @@ HostLiMapS::HostLiMapS(const float* solution, const float* signal, const float* 
 
 void HostLiMapS::GetBeta(float* beta, float lambda) {
 	// beta is calulated by appling the reduction function specified in the paper
-
 	size_t index = 0;
 
 	__m256 nLambdaV = _mm256_set1_ps(-lambda);
 	__m256 onesV = _mm256_set1_ps(1.0f);
 
 	// beta is same size al alpha
+	// Let's apply the function to 8 floats at a time
 	for (index = 0; index < _alpha.size() / 8; index++)
 	{
 		__m256 alphaV = _mm256_load_ps(&_alpha[index * 8]);
@@ -30,6 +30,7 @@ void HostLiMapS::GetBeta(float* beta, float lambda) {
 		_mm256_store_ps(&beta[index * 8], betaV);
 	}
 
+	// Function application to array tail elements
 	for (size_t i = index * 8; i < _alpha.size(); i++)
 	{
 		float alphaD = _alpha[i];

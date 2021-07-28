@@ -13,9 +13,11 @@
 #include "cpu/HostLiMapS.h"
 #include "gpu/DeviceLiMapSv1.cuh"
 #include "gpu/DeviceLiMapSv2.cuh"
-//#include "gpu/DeviceLiMapSv3.cuh"
+#include "gpu/DeviceLiMapSv3.cuh"
 #include "gpu/DeviceLiMapSv4.cuh"
 #include "gpu/DeviceLiMapSTex.cuh"
+
+void RunLiMapS();
 
 void ReadColumnVector(const std::string& file, float* dest) {
 	std::ifstream stream(file);
@@ -116,6 +118,26 @@ void RunBaseLiMapSKernel(const float* dictionary, const float* dictionaryInverse
 	std::cout << "GPU kernel (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 }
 
+void RunImprovedLiMapSKernel(const float* dictionary, const float* dictionaryInverse, const float* signal, const float* actualSolution, size_t dictionaryWords, size_t signalSize, int maxIterations) {
+	std::cout << "Starting GPU kernel (final) execution ..." << std::endl;
+	DeviceLiMapSv3 deviceLiMapSv3(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
+
+	StopWatch sw;
+	sw.Restart();
+	deviceLiMapSv3.Execute(maxIterations);
+	sw.Stop();
+
+	const std::vector<float>& alphaResult = deviceLiMapSv3.GetAlpha();
+	for (size_t i = 0; i < dictionaryWords; i++)
+	{
+		if (actualSolution[i] != alphaResult[i])
+		{
+			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from GPU" << std::endl;
+		}
+	}
+	std::cout << "GPU kernel (final) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
+}
+
 void RunFinalLiMapSKernel(const float* dictionary, const float* dictionaryInverse, const float* signal, const float* actualSolution, size_t dictionaryWords, size_t signalSize, int maxIterations) {
 	std::cout << "Starting GPU kernel (final) execution ..." << std::endl;
 	DeviceLiMapSv4 deviceLiMapSv4(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
@@ -166,38 +188,32 @@ int main(int argn, char** argc)
 
 	if (argn > 1 && strcmp(argc[1], "norm-benchmark") == 0) {
 		RunNormBenchmarks(atoi(argc[2]));
-
-		return 0;
 	}
 	else if (argn > 1 && strcmp(argc[1], "normdiff-benchmark") == 0) {
 		RunNormDiffBenchmarks(atoi(argc[2]));
-
-		return 0;
 	}
 	else if (argn > 1 && strcmp(argc[1], "th-benchmark") == 0) {
 		RunThresholdBenchmarks(atoi(argc[2]));
-
-		return 0;
 	}
 	else if (argn > 1 && strcmp(argc[1], "copy-benchmark") == 0) {
 		RunCopyBenchmarks(atoi(argc[2]));
-
-		return 0;
 	}
 	else if (argn > 1 && strcmp(argc[1], "mv-benchmark") == 0) {
 		RunMatrixVectorBenchmarks(atoi(argc[2]));
-
-		return 0;
 	}
+	else {
+		RunLiMapS();
+	}	
+	return 0;
+}
 
+void RunLiMapS() {
+	// Let' s  change the floating point precision when printing
 	std::cout.precision(std::numeric_limits<float>::max_digits10);
 	std::cout << " *** LiMapS Implementation ***" << std::endl;
 
 	const int signalSize = 2000;
 	const int dictionaryWords = 8000;
-
-	/*const int signalSize = 200;
-	const int dictionaryWords = 800;*/
 
 	// We may use some async CUDA memories operation so better to declare our pointer as non-paginable memory
 	float* actualSolution;
@@ -218,21 +234,22 @@ int main(int argn, char** argc)
 	ReadMatrix("data\\2\\in_D.txt", dictionary, signalSize, dictionaryWords);
 	ReadMatrix("data\\2\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
 
-
-	std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
+		std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
 	std::cout << "Signal size: " << signalSize << std::endl << std::endl;
 
 	// Stopping criteria declaration
 	const int maxIterations = 1000;
 
-
 	//RunLiMapSOnCPU(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
 #if NDEBUG
+	// Cublas makes NSight debugging hang, so better to not use it
+	// It will be used only in release mode, as comparison 
 	RunLiMapSOnCuBlas(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 #endif
 
 	//RunBaseLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+	//RunImprovedLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 	RunFinalLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 	//RunTexLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
@@ -242,5 +259,4 @@ int main(int argn, char** argc)
 	CUDA_CHECK(cudaFreeHost(signal));
 	CUDA_CHECK(cudaFreeHost(dictionary));
 	CUDA_CHECK(cudaFreeHost(dictionaryInverse));
-	return 0;
 }

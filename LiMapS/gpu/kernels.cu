@@ -1,14 +1,5 @@
 ﻿#include "kernels.cuh"
 
-
-__global__ void GetBetaKrnl(float lambda, const float* data, float* beta, size_t size) {
-	size_t offset = blockDim.x * blockIdx.x + threadIdx.x;
-	if (offset >= size) return;
-
-	beta[offset] = GetBeta(lambda, data[offset]);
-}
-
-
 __global__ void SquareSumKrnl(const float* vec, size_t size, float* result) {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 

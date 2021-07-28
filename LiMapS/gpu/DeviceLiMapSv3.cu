@@ -7,9 +7,6 @@
 #include "cublas_shared.h"
 
 #include "kernels.cuh"
-#include "threshold_kernels.cuh"
-
-
 
 static __device__ float* _solutionD;
 static __device__ float* _signalD;
@@ -59,19 +56,6 @@ __global__ void GetAlphaImprv(size_t dictionaryWords, size_t signalSize) {
 		atomicAdd(ptr1, sum);
 		atomicAdd(ptr2, sum);
 		}, &_alphaD[idy], &_alphaNewD[idy]);
-}
-
-template<int unrollFactor>
-__global__ void CalculateBetaStepImpr(float lambda, size_t dictionaryWords, size_t signalSize) {
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-
-#pragma unroll
-	for (int i = 0; i < unrollFactor; i++) {
-		size_t index = i * blockDim.x + idx;
-
-		if (index < dictionaryWords)
-			_beta[index] = GetBeta(lambda, _alphaD[index]);
-	}
 }
 
 __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
@@ -124,7 +108,7 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 		// In this way, the work is executed with all data dependencies respected
 
 		// 3.1) We need to compute the beta vector for this iterarion
-		CalculateBetaStepImpr<8> << <red8DicGridSize, blocks, 0 >> > (lambda, dictionaryWords, signalSize);
+		CalculateBeta<8> << <red8DicGridSize, blocks, 0 >> > (_alphaD, _beta, lambda, dictionaryWords);
 
 		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
 		CopyTo<8> << <red8SignalGridSize, blocks, 0 >> > (_signalD, signalSize, _intermD, true);
