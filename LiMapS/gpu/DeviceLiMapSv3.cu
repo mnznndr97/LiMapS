@@ -157,7 +157,7 @@ __global__ void LiMapS2(size_t dictionaryWords, size_t signalSize) {
 
 		// 3.4) We see how much alpha is changed
 		_alphaDiffSquareSum = 0.0f;
-		SquareDiffSumKrnlUnroll<8> << <red8DicGridSize, blocks >> > (_alphaNewD, _alphaD, dictionaryWords, &_alphaDiffSquareSum);
+		SquareDiffSumKrnlUnroll<8> << <red8DicGridSize, blocks, sharedMemSize >> > (_alphaNewD, _alphaD, dictionaryWords, &_alphaDiffSquareSum);
 		CUDA_CHECKD(cudaDeviceSynchronize());
 
 		float norm = sqrtf(_alphaDiffSquareSum);

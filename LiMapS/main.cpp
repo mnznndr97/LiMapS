@@ -13,7 +13,8 @@
 #include "cpu/HostLiMapS.h"
 #include "gpu/DeviceLiMapSv1.cuh"
 #include "gpu/DeviceLiMapSv2.cuh"
-#include "gpu/DeviceLiMapSv3.cuh"
+//#include "gpu/DeviceLiMapSv3.cuh"
+#include "gpu/DeviceLiMapSv4.cuh"
 #include "gpu/DeviceLiMapSTex.cuh"
 
 void ReadColumnVector(const std::string& file, float* dest) {
@@ -115,16 +116,16 @@ void RunBaseLiMapSKernel(const float* dictionary, const float* dictionaryInverse
 	std::cout << "GPU kernel (naive) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 }
 
-void RunImprovedLiMapSKernel(const float* dictionary, const float* dictionaryInverse, const float* signal, const float* actualSolution, size_t dictionaryWords, size_t signalSize, int maxIterations) {
-	std::cout << "Starting GPU kernel (improved) execution ..." << std::endl;
-	DeviceLiMapSv3 deviceLiMapSv3(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
+void RunFinalLiMapSKernel(const float* dictionary, const float* dictionaryInverse, const float* signal, const float* actualSolution, size_t dictionaryWords, size_t signalSize, int maxIterations) {
+	std::cout << "Starting GPU kernel (final) execution ..." << std::endl;
+	DeviceLiMapSv4 deviceLiMapSv4(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
 
 	StopWatch sw;
 	sw.Restart();
-	deviceLiMapSv3.Execute(maxIterations);
+	deviceLiMapSv4.Execute(maxIterations);
 	sw.Stop();
 
-	const std::vector<float>& alphaResult = deviceLiMapSv3.GetAlpha();
+	const std::vector<float>& alphaResult = deviceLiMapSv4.GetAlpha();
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
 		if (actualSolution[i] != alphaResult[i])
@@ -132,7 +133,7 @@ void RunImprovedLiMapSKernel(const float* dictionary, const float* dictionaryInv
 			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from GPU" << std::endl;
 		}
 	}
-	std::cout << "GPU kernel (improved) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
+	std::cout << "GPU kernel (final) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
 }
 
 void RunTexLiMapSKernel(const float* dictionary, const float* dictionaryInverse, const float* signal, const float* actualSolution, size_t dictionaryWords, size_t signalSize, int maxIterations) {
@@ -192,8 +193,8 @@ int main(int argn, char** argc)
 	std::cout.precision(std::numeric_limits<float>::max_digits10);
 	std::cout << " *** LiMapS Implementation ***" << std::endl;
 
-	const int signalSize = 200;
-	const int dictionaryWords = 800;
+	const int signalSize = 2000;
+	const int dictionaryWords = 8000;
 
 	/*const int signalSize = 200;
 	const int dictionaryWords = 800;*/
@@ -212,10 +213,10 @@ int main(int argn, char** argc)
 	std::cout << "Reading data ..." << std::endl;
 
 	// Let' s read our data from a file for the moment and assert that evertything has the right dimension
-	ReadColumnVector("data\\1\\in_true_alpha.txt", actualSolution);
-	ReadColumnVector("data\\1\\in_signal.txt", signal);
-	ReadMatrix("data\\1\\in_D.txt", dictionary, signalSize, dictionaryWords);
-	ReadMatrix("data\\1\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
+	ReadColumnVector("data\\2\\in_true_alpha.txt", actualSolution);
+	ReadColumnVector("data\\2\\in_signal.txt", signal);
+	ReadMatrix("data\\2\\in_D.txt", dictionary, signalSize, dictionaryWords);
+	ReadMatrix("data\\2\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
 
 
 	std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
@@ -232,7 +233,7 @@ int main(int argn, char** argc)
 #endif
 
 	//RunBaseLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
-	RunImprovedLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+	RunFinalLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 	//RunTexLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
 	/* ----- Cleanup ----- */

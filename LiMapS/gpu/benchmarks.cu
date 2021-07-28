@@ -290,25 +290,25 @@ void RunMatrixVectorBenchmarks(size_t dataSize) {
 	std::cout << "v2 - 64 block size ..." << std::endl;
 	blockSize.x = 64;
 	gridSize = GetGridSize(blockSize, height);
-	Matrix2Vector2<1, false> << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	Matrix2Vector2 << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	std::cout << "v2 - 128 block size ..." << std::endl;
 	blockSize.x = 128;
 	gridSize = GetGridSize(blockSize, height);
-	Matrix2Vector2<1, false> << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	Matrix2Vector2 << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	std::cout << "v2 - 256 block size ..." << std::endl;
 	blockSize.x = 256;
 	gridSize = GetGridSize(blockSize, height);
-	Matrix2Vector2<1, false> << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	Matrix2Vector2 << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	std::cout << "v2 - 512 block size ..." << std::endl;
 	blockSize.x = 512;
 	gridSize = GetGridSize(blockSize, height);
-	Matrix2Vector2<1, false> << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	Matrix2Vector2 << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 }

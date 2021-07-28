@@ -159,9 +159,41 @@ __global__ void Matrix2Vector(const float* matrix, const float* vector, float* d
 /// <summary>
 /// Performs a matrix to vector moltiplication
 /// </summary>
-template<int unrollFactor, bool negate, typename... Arguments>
-__global__ void Matrix2Vector2(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height, const nvstd::function<void(Arguments..., float)>&& sumCallback, Arguments... args) {
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
+/// <remarks>
+/// Cannot use nvstd::function here. Back to templates :)
+/// </remarks>
+template<typename T, typename... Arguments>
+__global__ void Matrix2Vector3(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height, T sumCallback, Arguments... args) {
+	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	float sum = 0.0f;
+	// We iterate over block size to reach width
+	for (size_t i = 0; i < ((width + warpSize - 1) / warpSize); i++)
+	{
+		size_t base = i * warpSize;
+		size_t index = base + (threadIdx.x % warpSize);
+		float data = index < width ? vector[index] : 0.0f;
+
+#pragma unroll
+		for (int w = 0; w < warpSize; w++)
+		{
+			float vectorData = __shfl_sync(FULL_MASK, data, w);
+			//float matrixData = ((idx < height) && ((base + w) < width)) ? matrix[ idx * width + (base + w)] : 0.0f;
+			float matrixData = ((idx < height) && ((base + w) < width)) ? matrix[(base + w) * height + idx] : 0.0f;
+			sum += matrixData * vectorData;
+		}
+	}
+
+	if (idx < height) {
+		sumCallback(args..., dest, idx, sum);
+	}
+}
+
+/// <summary>
+/// Performs a matrix to vector moltiplication
+/// </summary>
+__inline__ __global__ void Matrix2Vector2(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height) {
+	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 
 	float sum = 0.0f;
 	// We iterate over block size to reach width
@@ -180,12 +212,8 @@ __global__ void Matrix2Vector2(const float* __restrict__ matrix, const float* __
 		}
 	}
 
-	if (idx == height - 1) {
-		printf("Sum: %f\n", sum);
-	}
-
 	if (idx >= height) return;
-	sumCallback(args..., negate ? -sum : sum);
+	dest[idx] = sum;
 }
 
 /// <summary>
@@ -383,52 +411,4 @@ __global__ void ThresholdVectorAlwaysWrite(float* vector, size_t size) {
 /// are the calculation of the blockIdx_x and blockIdx_y and replacement of blockIdx.x and
 /// bloclIdx.y with the subscripted versions in the remaining code
 /// </summary>
-template<int unrollFactor>
-__global__ void Transpose(const float* __restrict__ source, float* destination, size_t width, size_t height) {
-	// Handle to thread block group
-	cg::thread_block cta = cg::this_thread_block();
-	__shared__ float tile[TILE_DIM][TILE_DIM + 1];
-
-	size_t size = width * height;
-
-	int blockIdx_x, blockIdx_y;
-
-	// do diagonal reordering
-	if (width == height)
-	{
-		blockIdx_y = blockIdx.x;
-		blockIdx_x = (blockIdx.x + blockIdx.y) % gridDim.x;
-	}
-	else
-	{
-		int bid = blockIdx.x + gridDim.x * blockIdx.y;
-		blockIdx_y = bid % gridDim.y;
-		blockIdx_x = ((bid / gridDim.y) + blockIdx_y) % gridDim.x;
-	}
-
-	// from here on the code is same as previous kernel except blockIdx_x replaces blockIdx.x
-	// and similarly for y
-
-	int xIndex = blockIdx_x * TILE_DIM + threadIdx.x;
-	int yIndex = blockIdx_y * TILE_DIM + threadIdx.y;
-	int index_in = xIndex + (yIndex)*width;
-
-	xIndex = blockIdx_y * TILE_DIM + threadIdx.x;
-	yIndex = blockIdx_x * TILE_DIM + threadIdx.y;
-	int index_out = xIndex + (yIndex)*height;
-
-	// Let's read all the tile rows. Remember that each block reads 
-	for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS)
-	{
-		if (index_in + i * width < size)
-			tile[threadIdx.y + i][threadIdx.x] = idata[index_in + i * width];
-	}
-
-	cg::sync(cta);
-
-	for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS)
-	{
-		if (index_out + i * height < size)
-			odata[index_out + i * height] = tile[threadIdx.x][threadIdx.y + i];
-	}
-}
+__global__ void Transpose(const float* __restrict__ source, float* destination, size_t width, size_t height);

@@ -62,7 +62,7 @@ __global__ void GetAlphaImprv(size_t dictionaryWords, size_t signalSize) {
 }
 
 template<int unrollFactor>
-__global__ void CalculateBetaStepImpr(float lambda, size_t dictionaryWords, size_t signalSize) {
+__global__ void CalculateBetaStepImprv4(float lambda, size_t dictionaryWords, size_t signalSize) {
 	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
 
 #pragma unroll
@@ -82,37 +82,30 @@ __global__ void LiMapS4(size_t dictionaryWords, size_t signalSize) {
 	dim3 blocks(128);
 	dim3 red8DicGridSize = GetGridSize(blocks, dictionaryWords, 8);
 	dim3 red8SignalGridSize = GetGridSize(blocks, signalSize, 8);
+	dim3 dicGridSize = GetGridSize(blocks, dictionaryWords);
+	dim3 signalGridSize = GetGridSize(blocks, signalSize);
+	int sharedMemSize = blocks.x / warpSize;
 
-	SquareSumKrnlUnroll<8> << <red8SignalGridSize, blocks, blocks.x / warpSize >> > (_signalD, signalSize, &_signalSquareSum);
+
+	SquareSumKrnlUnroll<8> << <red8SignalGridSize, blocks, sharedMemSize >> > (_signalD, signalSize, &_signalSquareSum);
 	CUDA_CHECKD(cudaDeviceSynchronize());
 
 	assert(_signalSquareSum >= 0.0f);
-
-	float t = sqrtf(_signalSquareSum);
-	float lambda = 1.0f / t;
+	float lambda = 1.0f / sqrtf(_signalSquareSum);
 
 	_beta = new float[dictionaryWords];
 	_intermD = new float[signalSize];
 
-	dim3 txGrid(dictionaryWords / TILE_DIM, signalSize / TILE_DIM);
-	dim3 txThreads(TILE_DIM, BLOCK_ROWS);
-	Transpose << < txGrid, txThreads >> > (_dictionaryD, _dictionaryD, dictionaryWords, signalSize);
-	std::swap(txGrid.x, txGrid.y);
-	Transpose << < txGrid, txThreads >> > (_dictionaryInverseD, _dictionaryInverseD, signalSize, dictionaryWords);
-
 	// 2) The second step of the algorithm is to prepare the starting alpha vector so also here we 
 	// Launch the kernel calculation and we synchronize the device
 
-
-
-
-	dim3 gridSize = red8SignalGridSize;
-	gridSize.y = dictionaryWords;
-	int sharedMemSize = blocks.x / warpSize;
-	GetAlphaImprv<8> << <gridSize, blocks, sharedMemSize >> > (dictionaryWords, signalSize);
-	CUDA_CHECKD(cudaPeekAtLastError());
+	Matrix2Vector3 << <dicGridSize, blocks >> > (_dictionaryInverseD, _signalD, _alphaD, signalSize, dictionaryWords, [](float* dest2, float* dest, size_t index, float sum) {
+		dest[index] = sum;
+		dest2[index] = sum;
+		}, _alphaNewD);
 	CUDA_CHECKD(cudaDeviceSynchronize());
 
+	dim3 gridSize = signalGridSize;
 	int i = 0;
 	for (i = 0; i < 1000; i++)
 	{
@@ -127,40 +120,24 @@ __global__ void LiMapS4(size_t dictionaryWords, size_t signalSize) {
 		// In this way, the work is executed with all data dependencies respected
 
 		// 3.1) We need to compute the beta vector for this iterarion
-		CalculateBetaStepImpr<8> << <red8DicGridSize, blocks, 0 >> > (lambda, dictionaryWords, signalSize);
+		CalculateBetaStepImprv4<8> << <red8DicGridSize, blocks, 0 >> > (lambda, dictionaryWords, signalSize);
 
 		// 3.2) We need to compute the intermediate (dic * beta - sig) vector
-		CopyTo<8> << <red8SignalGridSize, blocks, 0 >> > (_signalD, signalSize, _intermD, true);
-
-		gridSize = red8DicGridSize;
-		//gridSize.x = 80;
-		gridSize.y = signalSize;
-		int sharedMemSize = blocks.x / warpSize;
-		Matrix2Vector2<1, false> << < GetGridSize(, blocks >> > (_dictionaryD, _beta, _intermD, dictionaryWords, signalSize);
-		CUDA_CHECKD(cudaPeekAtLastError());
+		Matrix2Vector3 << <signalGridSize, blocks >> > (_dictionaryD, _beta, _intermD, dictionaryWords, signalSize, [](float* signal, float* dest, size_t index, float sum) {
+			dest[index] = sum - signal[index];
+			}, _signalD);
 
 		// 3.3) We compute the new alpha with the thresholding at the end
-		CopyTo<8> << <red8DicGridSize, blocks, 0 >> > (_beta, dictionaryWords, _alphaNewD, false);
-
-		blocks.y = 1;
-		gridSize = red8SignalGridSize;
-		//gridSize.x = 80;
-		gridSize.y = (dictionaryWords + 1) / 2;
-		gridSize.y = dictionaryWords;
-		sharedMemSize = blocks.x / warpSize;
-		Matrix2Vector<8, true> << <gridSize, blocks, sharedMemSize >> > (_dictionaryInverseD, _intermD, _alphaNewD, signalSize, dictionaryWords);
-		CUDA_CHECKD(cudaPeekAtLastError());
-
-		// NB: Benchmarks says that 128 threads per block should result in the best occupancy for the
-		// threshold kernel
-		blocks.y = 1;
-		ThresholdVector<8> << <red8DicGridSize, blocks >> > (_alphaNewD, dictionaryWords);
+		Matrix2Vector3 << <dicGridSize, blocks >> > (_dictionaryInverseD, _intermD, _alphaNewD, signalSize, dictionaryWords, [](float* beta, float* dest, size_t index, float sum) {
+			float data = beta[index] - sum;
+			dest[index] = fabs(data) < 1e-4f ? 0.0f : data;
+			}, _beta);
 
 		lambda = 1.01f * lambda;
 
 		// 3.4) We see how much alpha is changed
 		_alphaDiffSquareSum = 0.0f;
-		SquareDiffSumKrnlUnroll<8> << <red8DicGridSize, blocks >> > (_alphaNewD, _alphaD, dictionaryWords, &_alphaDiffSquareSum);
+		SquareDiffSumKrnlUnroll<8> << <red8DicGridSize, blocks, sharedMemSize >> > (_alphaNewD, _alphaD, dictionaryWords, &_alphaDiffSquareSum);
 		CUDA_CHECKD(cudaDeviceSynchronize());
 
 		float norm = sqrtf(_alphaDiffSquareSum);
@@ -210,17 +187,29 @@ DeviceLiMapSv4::DeviceLiMapSv4(const float* solution, const float* signal, const
 
 void DeviceLiMapSv4::Execute(int iterations)
 {
+	cuda_ptr<float> tempDic = make_cuda<float>(_dictionaryWords * _signalSize);
+
+	CUDA_CHECK(cudaMemcpyAsync(tempDic.get(), _dictionaryHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
+	dim3 txGrid((_dictionaryWords + TILE_DIM - 1) / TILE_DIM, (_signalSize + TILE_DIM - 1) / TILE_DIM);
+	dim3 txThreads(TILE_DIM, BLOCK_ROWS);
+	Transpose << < txGrid, txThreads >> > (tempDic.get(), _dictionaryPtr.get(), _dictionaryWords, _signalSize);
+
+	CUDA_CHECK(cudaMemcpyAsync(tempDic.get(), _dictionaryInverseHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
+	std::swap(txGrid.x, txGrid.y);
+	Transpose << < txGrid, txThreads >> > (tempDic.get(), _dictionaryInversePtr.get(), _signalSize, _dictionaryWords);
+
+	// We must syncronize to release our pointer
+	CUDA_CHECK(cudaDeviceSynchronize());
+	tempDic.release();
+
 	cudaEvent_t start;
 	cudaEvent_t stop;
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);
-
 	// We lanuch the memory copies asyncronously here and then we wait on the sync point and the end of the function
 	// In this way we first enqueue all the work on the NULL stream and then we waiting, minimizing the "wasted" time in CPU-GPU
 	// command execution
 	CUDA_CHECK(cudaMemcpyAsync(_signalPtr.get(), _signalHost, sizeof(float) * _signalSize, cudaMemcpyHostToDevice));
-	CUDA_CHECK(cudaMemcpyAsync(_dictionaryInversePtr.get(), _dictionaryInverseHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
-	CUDA_CHECK(cudaMemcpyAsync(_dictionaryPtr.get(), _dictionaryHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
 
 	// LiMapS kernel will dynamically launch its own kernels. So only one thread is necessary
 	// By doing this, we can erase the CPU-GPU communication time for launching kernels
