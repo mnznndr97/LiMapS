@@ -240,7 +240,7 @@ void RunLiMapS() {
 	// Stopping criteria declaration
 	const int maxIterations = 1000;
 
-	//RunLiMapSOnCPU(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+	RunLiMapSOnCPU(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
 #if NDEBUG
 	// Cublas makes NSight debugging hang, so better to not use it

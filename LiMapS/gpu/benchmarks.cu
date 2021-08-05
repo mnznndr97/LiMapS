@@ -210,17 +210,19 @@ void RunKernelsBenchmarks() {
 	cuda_ptr<float> destArray = make_cuda<float>(dataSize);
 
 	dim3 blockSize(32);
-	
+
 }
 
 void RunMatrixVectorBenchmarks(size_t dataSize) {
 
-	size_t width = 2000;
-	size_t height = 8000;
+	size_t width = dataSize;
+	size_t height = dataSize;
 	std::cout << "Starting matrix -vector benchmarks" << std::endl;
 
+	dim3 test = GetGridSize(dim3(128), width);
+
 	cuda_ptr<float> matrix = make_cuda<float>(width * height);
-	cuda_ptr<float> sourceArray = make_cuda<float>(width);
+	cuda_ptr<float> sourceArray = make_cuda<float>(test.x * 128);
 	cuda_ptr<float> destArray = make_cuda<float>(width);
 
 	dim3 blockSize(256);
@@ -228,17 +230,19 @@ void RunMatrixVectorBenchmarks(size_t dataSize) {
 	Fill << <GetGridSize(blockSize, width), blockSize >> > (sourceArray.get(), width);
 
 #if NDEBUG
-	std::cout << "Cublas ..." << std::endl;
+	/*std::cout << "Cublas ..." << std::endl;
 	cublasHandle_t cublasHandle;
 	CUBLAS_CHECK(cublasCreate(&cublasHandle));
 	float alpha = 1.0f;
 	CUBLAS_CHECK(cublasSgemv_v2(cublasHandle, CUBLAS_OP_T, height, width, &alpha, matrix.get(), height, sourceArray.get(), 1, &alpha, destArray.get(), 1));
-	CUBLAS_CHECK(cublasDestroy(cublasHandle));
+	CUBLAS_CHECK(cublasDestroy(cublasHandle));*/
 #endif
 
-	std::cout << "64 block size ..." << std::endl;
+	dim3 gridSize;
+
+	/*std::cout << "64 block size ..." << std::endl;
 	blockSize.x = 64;
-	dim3 gridSize = GetGridSize(blockSize, width, 8);
+	gridSize = GetGridSize(blockSize, width, 8);
 	gridSize.y = height;
 	Matrix2Vector<8, false> << <gridSize, blockSize.x, blockSize.x / 32 >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
@@ -262,34 +266,91 @@ void RunMatrixVectorBenchmarks(size_t dataSize) {
 	gridSize = GetGridSize(blockSize, width, 8);
 	gridSize.y = height;
 	Matrix2Vector<8, false> << <gridSize, blockSize.x, blockSize.x / 32 >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
+	CUDA_CHECK(cudaDeviceSynchronize());*/
 
 
 	/* Version 2*/
 
-
-	std::cout << "v2 - 64 block size ..." << std::endl;
+	/*std::cout << "v2 - 64 block size ..." << std::endl;
 	blockSize.x = 64;
 	gridSize = GetGridSize(blockSize, height);
-	Matrix2Vector2 << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
+	Matrix2Vector2B << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());*/
 
 	std::cout << "v2 - 128 block size ..." << std::endl;
 	blockSize.x = 128;
 	gridSize = GetGridSize(blockSize, height);
-	Matrix2Vector2 << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	Matrix2Vector2B << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
-	std::cout << "v2 - 256 block size ..." << std::endl;
+
+	std::cout << "v3 - 128 block size ..." << std::endl;
+	blockSize.x = 128;
+	gridSize = GetGridSize(blockSize, height);
+	Matrix2Vector3B << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	/*std::cout << "v2 - 256 block size ..." << std::endl;
 	blockSize.x = 256;
 	gridSize = GetGridSize(blockSize, height);
-	Matrix2Vector2 << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	Matrix2Vector2B << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	std::cout << "v2 - 512 block size ..." << std::endl;
 	blockSize.x = 512;
 	gridSize = GetGridSize(blockSize, height);
-	Matrix2Vector2 << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	Matrix2Vector2B << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());*/
+
+	/* Version Partition Camping */
+
+	/*std::cout << "vPart - 64 block size ..." << std::endl;
+	blockSize.x = 64;
+	gridSize = GetGridSize(blockSize, height);
+	Matrix2VectorPartitionB << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
+
+	std::cout << "vPart - 128 block size ..." << std::endl;
+	blockSize.x = 128;
+	gridSize = GetGridSize(blockSize, height);
+	Matrix2VectorPartitionB << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	std::cout << "vPart - 256 block size ..." << std::endl;
+	blockSize.x = 256;
+	gridSize = GetGridSize(blockSize, height);
+	Matrix2VectorPartitionB << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	std::cout << "vPart - 512 block size ..." << std::endl;
+	blockSize.x = 512;
+	gridSize = GetGridSize(blockSize, height);
+	Matrix2VectorPartitionB << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());*/
+
+	/* Version 2 - stream */
+	/*const int NSTREAM = 16;
+	cudaStream_t cudaStreams[NSTREAM];
+	for (int i = 0; i < NSTREAM; i++)
+	{
+		CUDA_CHECK(cudaStreamCreate(&cudaStreams[i]));
+	}
+
+	std::cout << "vStream - 128 block size ..." << std::endl;
+	blockSize.x = 128;
+	gridSize = GetGridSize(blockSize, (height + NSTREAM - 1) / NSTREAM);
+	for (int i = 0; i < NSTREAM; i++)
+	{
+		size_t offset = ((height + NSTREAM - 1) / NSTREAM) * i;
+		Matrix2VectorStream << <gridSize, blockSize.x, 0, cudaStreams[i] >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height, offset);
+	}
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+
+
+	for (size_t i = 0; i < NSTREAM; i++)
+	{
+		CUDA_CHECK(cudaStreamDestroy(cudaStreams[i]));
+	}*/
 
 }

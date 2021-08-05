@@ -7,6 +7,12 @@
 #define TILE_DIM    16
 #define BLOCK_ROWS  16
 
+__inline__ __device__ size_t Mod(size_t dividend, size_t divisor) {
+	while (dividend >= divisor)
+		dividend -= divisor;
+	return dividend;
+}
+
 __inline__ __device__ float GetBeta(float lambda, float data)
 {
 	return data * (1.0f - expf(-lambda * fabs(data)));
@@ -209,32 +215,90 @@ __global__ void Matrix2Vector2(const float* __restrict__ matrix, const float* __
 	}
 }
 
-/// <summary>
-/// Performs a matrix to vector moltiplication
-/// </summary>
-__inline__ __global__ void Matrix2Vector2(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height) {
+template<typename T, typename... Arguments>
+__global__ void Matrix2VectorPartition(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height, T sumCallback, Arguments... args) {
 	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 
 	float sum = 0.0f;
-	// We iterate over block size to reach width
+	// We iterate over block size to reach width. We iterate in blocks of a size of a warp
+	// In this way vector items are read one time in a single transaction for each warp
+	// NB: each thread is executing the operations, even if it is operating with an out-of-bound index;
+	// in this case the value calculated will always be 0.0f
 	for (size_t i = 0; i < ((width + warpSize - 1) / warpSize); i++)
 	{
 		size_t base = i * warpSize;
 		size_t index = base + (threadIdx.x % warpSize);
-		float data = index < width ? vector[index] : 0.0f;
 
+		// Vector read: each thread in the warp reads it own items, contiguous to the others
+		float data = 0.0f;
+		if (index < width) {
+			index = (index + (blockDim.x * blockIdx.x));
+			index = Mod(index, width);
+			data = vector[index];
+		}
+
+		// After data read, each thread in the warp shares the vector value with the other threads to calculare the sum
 #pragma unroll
 		for (int w = 0; w < warpSize; w++)
 		{
 			float vectorData = __shfl_sync(FULL_MASK, data, w);
-			float matrixData = (idx < height&& base + w < width) ? matrix[(base + w) * height + idx] : 0.0f;
+			float matrixData = 0.0f;
+			// Each thread in the warp is reading the same item but in different rows. So better use a column-major ordering
+			if ((idx < height) && (base + w < width)) {
+				index = base + (blockDim.x * blockIdx.x) + w;
+				index = Mod(index, width);
+				index = index * height + idx;
+				matrixData = matrix[index];
+			}
 			sum += matrixData * vectorData;
 		}
 	}
 
-	if (idx >= height) return;
-	dest[idx] = sum;
+	// Now if we are in our bound, we invoke the callback
+	if (idx < height) {
+		sumCallback(args..., dest, idx, sum);
+	}
 }
+
+__global__ void Matrix2VectorPartitionB(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height);
+
+__inline__ __global__ void Matrix2VectorStream(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height, size_t indexOffset) {
+	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+	idx += indexOffset;
+
+	float sum = 0.0f;
+	// We iterate over block size to reach width. We iterate in blocks of a size of a warp
+	// In this way vector items are read one time in a single transaction for each warp
+	// NB: each thread is executing the operations, even if it is operating with an out-of-bound index;
+	// in this case the value calculated will always be 0.0f
+	for (size_t i = 0; i < ((width + warpSize - 1) / warpSize); i++)
+	{
+		size_t base = i * warpSize;
+		size_t index = base + (threadIdx.x % warpSize);
+
+		// Vector read: each thread in the warp reads it own items, contiguous to the others
+		float data = index < width ? vector[index] : 0.0f;
+
+		// After data read, each thread in the warp shares the vector value with the other threads to calculare the sum
+#pragma unroll
+		for (int w = 0; w < warpSize; w++)
+		{
+			float vectorData = __shfl_sync(FULL_MASK, data, w);
+			// Each thread in the warp is reading the same item but in different rows. So better use a column-major ordering
+			float matrixData = ((idx < height) && ((base + w) < width)) ? matrix[(base + w) * height + idx] : 0.0f;
+			sum += matrixData * vectorData;
+		}
+	}
+
+	// Now if we are in our bound, we invoke the callback
+	if (idx < height) {
+		dest[idx] = sum;
+	}
+}
+
+
+__global__ void Matrix2Vector2B(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height);
+__global__ void Matrix2Vector3B(const float* __restrict__ matrix, const float* __restrict__ vector, float* dest, size_t width, size_t height);
 
 /// <summary>
 /// Performs a matrix to vector moltiplication
