@@ -6,9 +6,10 @@
 #include <cuda/std/functional>
 #include "cublas_shared.h"
 
-#include "kernels.cuh"
+#include "kernels/misc.cuh"
 #include "kernels/square_sum.cuh"
 #include "kernels/matrix2vector.cuh"
+#include "kernels/threshold.cuh"
 
 static __device__ float* _solutionD;
 static __device__ float* _signalD;

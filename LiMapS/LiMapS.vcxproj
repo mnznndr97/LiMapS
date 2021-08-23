@@ -104,8 +104,9 @@
     <CudaCompile Include="gpu\DeviceLiMapSCuBlas.cu" />
     <CudaCompile Include="gpu\DeviceLiMapSv2.cu" />
     <CudaCompile Include="gpu\DeviceLiMapSv4.cu" />
-    <CudaCompile Include="gpu\kernels.cu" />
+    <CudaCompile Include="gpu\kernels\matrix2vector.cu" />
     <CudaCompile Include="gpu\kernels\square_sum.cu" />
+    <CudaCompile Include="gpu\kernels\transpose.cu" />
     <CudaCompile Include="main.cpp">
       <FileType>CppCode</FileType>
     </CudaCompile>
@@ -121,13 +122,15 @@
     <ClInclude Include="gpu\DeviceLiMapSv2.cuh" />
     <ClInclude Include="gpu\DeviceLiMapSv3.cuh" />
     <ClInclude Include="gpu\DeviceLiMapSv4.cuh" />
-    <ClInclude Include="gpu\kernels.cuh" />
     <ClInclude Include="gpu\cublas_shared.h" />
     <ClInclude Include="gpu\cuda_shared.h" />
     <ClInclude Include="gpu\DeviceLiMapSCuBlas.cuh" />
     <ClInclude Include="gpu\kernels\matrix2vector.cuh" />
+    <ClInclude Include="gpu\kernels\misc.cuh" />
     <ClInclude Include="gpu\kernels\reduction.cuh" />
     <ClInclude Include="gpu\kernels\square_sum.cuh" />
+    <ClInclude Include="gpu\kernels\threshold.cuh" />
+    <ClInclude Include="gpu\kernels\transpose.cuh" />
     <ClInclude Include="StopWatch.h" />
   </ItemGroup>
   <ItemGroup>

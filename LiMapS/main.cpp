@@ -191,9 +191,12 @@ int main(int argn, char** argc)
 	cudaDeviceProp props;
 	cudaGetDeviceProperties(&props, 0);
 
+	// Let's print our GPU info to see that everything is ok
 	std::cout << props.name << std::endl;
 	std::cout << "\tThreads per block: " << props.maxThreadsPerBlock << std::endl;
+	std::cout << "\tMax blocks per multiprocessor: " << props.maxBlocksPerMultiProcessor << std::endl;
 
+	// Let's do a super easy arg parsing to see if we are running be
 	if (argn > 1 && strcmp(argc[1], "norm-benchmark") == 0) {
 		RunNormBenchmarks(atoi(argc[2]));
 	}
@@ -220,6 +223,8 @@ void RunLiMapS() {
 	std::cout.precision(std::numeric_limits<float>::max_digits10);
 	std::cout << " *** LiMapS Implementation ***" << std::endl;
 
+	// Data sizes are declared at compile time here for simplicity
+	const std::string dataIndex = "2";
 	const int signalSize = 2000;
 	const int dictionaryWords = 8000;
 
@@ -237,10 +242,10 @@ void RunLiMapS() {
 	std::cout << "Reading data ..." << std::endl;
 
 	// Let' s read our data from a file for the moment and assert that evertything has the right dimension
-	ReadColumnVector("data\\2\\in_true_alpha.txt", actualSolution);
-	ReadColumnVector("data\\2\\in_signal.txt", signal);
-	ReadMatrix("data\\2\\in_D.txt", dictionary, signalSize, dictionaryWords);
-	ReadMatrix("data\\2\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
+	ReadColumnVector("data\\" + dataIndex + "\\in_true_alpha.txt", actualSolution);
+	ReadColumnVector("data\\" + dataIndex + "\\in_signal.txt", signal);
+	ReadMatrix("data\\" + dataIndex + "\\in_D.txt", dictionary, signalSize, dictionaryWords);
+	ReadMatrix("data\\" + dataIndex + "\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
 
 	std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
 	std::cout << "Signal size: " << signalSize << std::endl << std::endl;
@@ -256,9 +261,13 @@ void RunLiMapS() {
 	RunLiMapSOnCuBlas(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 #endif
 
+	/* Olds LiMapS run (here just in case) */
 	//RunBaseLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 	//RunImprovedLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+
 	RunFinalLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
+
+	/* Texture LiMapS run just for test */
 	//RunTexLiMapSKernel(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
 	/* ----- Cleanup ----- */

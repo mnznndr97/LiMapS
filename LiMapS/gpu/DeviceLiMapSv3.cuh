@@ -6,6 +6,13 @@
 #include "../BaseLiMapS.h"
 #include <vector>
 
+// <summary>
+/// Implements a firsty optimized version of the LiMapS algorithm
+/// </summary>
+/// <remarks>
+/// The main code uses when possible common kernels with customized callback. The MatrixVector multiplication kernel will be later update to have
+/// better performance since this code perfors poorly on large data
+/// </remarks>
 class DeviceLiMapSv3 : public BaseLiMapS
 {
 private:

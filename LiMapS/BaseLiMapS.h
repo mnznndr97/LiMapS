@@ -21,8 +21,6 @@ protected:
 public:
 	inline BaseLiMapS(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize) :
 		_dictionaryWords(dictionaryWords), _signalSize(signalSize),
-		// To avoid C++ vector copies, let's just store the vector references for our input data. This may be dangerous since the class MUST have the same (or shorted)
-		// scope of our data, but for our purposes should be ok
 		_solutionHost(solution), _signalHost(signal), _dictionaryHost(D), _dictionaryInverseHost(DINV)
 	{
 

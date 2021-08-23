@@ -6,9 +6,10 @@
 #include <cuda/std/functional>
 #include "cublas_shared.h"
 
-#include "kernels.cuh"
+#include "kernels/misc.cuh"
 #include "kernels/square_sum.cuh"
 #include "kernels/matrix2vector.cuh"
+#include "kernels/threshold.cuh"
 
 static __device__ float* _solutionD;
 static __device__ float* _signalD;
@@ -22,18 +23,6 @@ static __device__ float* _intermD;
 
 static __device__ float _signalSquareSum;
 static __device__ float _alphaDiffSquareSum;
-
-template<int unrollFactor>
-__global__ void FillInterm(float* vector, size_t size) {
-	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		if (vOffset < size) vector[vOffset] = -_signalD[vOffset];
-	}
-}
 
 template<int unrollFactor>
 __global__ void GetAlphaImprv(size_t dictionaryWords, size_t signalSize) {

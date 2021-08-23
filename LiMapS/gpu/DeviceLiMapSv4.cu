@@ -6,9 +6,10 @@
 #include <cuda/std/functional>
 #include "cublas_shared.h"
 
-#include "kernels.cuh"
+#include "kernels/misc.cuh"
 #include "kernels/square_sum.cuh"
 #include "kernels/matrix2vector.cuh"
+#include "kernels/transpose.cuh"
 
 static __device__ float* _solutionD;
 static __device__ float* _signalD;
@@ -22,43 +23,6 @@ static __device__ float* _intermD;
 
 static __device__ float _signalSquareSum;
 static __device__ float _alphaDiffSquareSum;
-
-template<int unrollFactor>
-__global__ void FillInterm(float* vector, size_t size) {
-	int idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		if (vOffset < size) vector[vOffset] = -_signalD[vOffset];
-	}
-}
-
-template<int unrollFactor>
-__global__ void GetAlphaImprv(size_t dictionaryWords, size_t signalSize) {
-	size_t idx = blockIdx.x * (blockDim.x * unrollFactor) + threadIdx.x;
-	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (idy >= dictionaryWords) return;
-
-	float data = 0.0f;
-#pragma unroll
-	for (size_t i = 0; i < unrollFactor; i++)
-	{
-		size_t vOffset = idx + i * blockDim.x;
-		float dicInverse = vOffset < signalSize ? _dictionaryInverseD[idy * signalSize + vOffset] : 0.0f;
-		float signal = vOffset < signalSize ? _signalD[vOffset] : 0.0f;
-
-		//data += (dicInverse * signal);
-		data = fmaf(dicInverse, signal, data);
-	}
-
-	KernelReduce<float*, float*>(data, signalSize, [](float* ptr1, float* ptr2, float sum) {
-		atomicAdd(ptr1, sum);
-		atomicAdd(ptr2, sum);
-		}, &_alphaD[idy], &_alphaNewD[idy]);
-}
 
 __global__ void LiMapS4(size_t dictionaryWords, size_t signalSize) {
 	// 1) The first step of the LiMapS algorithm is to calculate the starting lamba coefficient. In order to do so, we need to calculate
@@ -172,9 +136,11 @@ DeviceLiMapSv4::DeviceLiMapSv4(const float* solution, const float* signal, const
 
 void DeviceLiMapSv4::Execute(int iterations)
 {
+	/* First prparation step: we need to transpose the two dictionaries since our Matrxi2Vector2 needs a column major ordering */
 	cuda_ptr<float> tempDic = make_cuda<float>(_dictionaryWords * _signalSize);
 
 	CUDA_CHECK(cudaMemcpyAsync(tempDic.get(), _dictionaryHost, sizeof(float) * _dictionaryWords * _signalSize, cudaMemcpyHostToDevice));
+	// Let's calculate the transpose necessary grid dimension and blocks
 	dim3 txGrid((_dictionaryWords + TILE_DIM - 1) / TILE_DIM, (_signalSize + TILE_DIM - 1) / TILE_DIM);
 	dim3 txThreads(TILE_DIM, BLOCK_ROWS);
 	Transpose << < txGrid, txThreads >> > (tempDic.get(), _dictionaryPtr.get(), _dictionaryWords, _signalSize);
@@ -183,7 +149,7 @@ void DeviceLiMapSv4::Execute(int iterations)
 	std::swap(txGrid.x, txGrid.y);
 	Transpose << < txGrid, txThreads >> > (tempDic.get(), _dictionaryInversePtr.get(), _signalSize, _dictionaryWords);
 
-	// We must syncronize to release our pointer
+	// We must syncronize to release our pointer since we are launching the kernel and the copies asynchronously
 	CUDA_CHECK(cudaDeviceSynchronize());
 	tempDic.release();
 
@@ -191,8 +157,8 @@ void DeviceLiMapSv4::Execute(int iterations)
 	cudaEvent_t stop;
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);
-	// We lanuch the memory copies asyncronously here and then we wait on the sync point and the end of the function
-	// In this way we first enqueue all the work on the NULL stream and then we waiting, minimizing the "wasted" time in CPU-GPU
+	// We launch the memory copies asyncronously here and then we wait on the sync point and the end of the function
+	// In this way we first enqueue all the work on the NULL stream and then we wait, minimizing the "wasted" time in CPU-GPU
 	// command execution
 	CUDA_CHECK(cudaMemcpyAsync(_signalPtr.get(), _signalHost, sizeof(float) * _signalSize, cudaMemcpyHostToDevice));
 

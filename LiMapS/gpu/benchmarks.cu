@@ -4,11 +4,12 @@
 
 #include "cuda_shared.h"
 #include "cublas_shared.h"
-#include "kernels.cuh"
 
+#include "kernels/misc.cuh"
 #include "kernels/reduction.cuh"
 #include "kernels/square_sum.cuh"
 #include "kernels/matrix2vector.cuh"
+#include "kernels/threshold.cuh"
 
 __global__ void Fill(float* data, size_t size, float val = 1.0f) {
 	int index = blockIdx.x * blockDim.x + threadIdx.x;

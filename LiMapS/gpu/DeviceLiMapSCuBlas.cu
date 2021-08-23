@@ -1,7 +1,8 @@
 ﻿#include "DeviceLiMapSCuBlas.cuh"
 
 #include "cublas_shared.h"
-#include "kernels.cuh"
+#include "kernels/misc.cuh"
+#include "kernels/threshold.cuh"
 
 DeviceLiMapSCuBlas::DeviceLiMapSCuBlas(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize)
 	: BaseLiMapS(solution, signal, D, DINV, dictionaryWords, signalSize)
