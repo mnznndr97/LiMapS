@@ -6,6 +6,10 @@
 #include "cublas_shared.h"
 #include "kernels.cuh"
 
+#include "kernels/reduction.cuh"
+#include "kernels/square_sum.cuh"
+#include "kernels/matrix2vector.cuh"
+
 __global__ void Fill(float* data, size_t size, float val = 1.0f) {
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	if (index < size) {
@@ -245,7 +249,7 @@ void RunMatrixVectorBenchmarks(size_t dataSize) {
 	gridSize = GetGridSize(blockSize, width, 8);
 	gridSize.y = height;
 	Matrix2Vector<8, false> << <gridSize, blockSize.x, blockSize.x / 32 >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
+	CUDA_CHECK(cudaDeviceSynchronize()); */
 
 	std::cout << "128 block size ..." << std::endl;
 	blockSize.x = 128;
@@ -254,7 +258,7 @@ void RunMatrixVectorBenchmarks(size_t dataSize) {
 	Matrix2Vector<8, false> << <gridSize, blockSize.x, blockSize.x / 32 >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
-	std::cout << "256 block size ..." << std::endl;
+	/* std::cout << "256 block size ..." << std::endl;
 	blockSize.x = 256;
 	gridSize = GetGridSize(blockSize, width, 8);
 	gridSize.y = height;
@@ -280,14 +284,15 @@ void RunMatrixVectorBenchmarks(size_t dataSize) {
 	std::cout << "v2 - 128 block size ..." << std::endl;
 	blockSize.x = 128;
 	gridSize = GetGridSize(blockSize, height);
-	Matrix2Vector2B << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	Matrix2Vector2 << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height,
+		[] __device__(int dummy, float* dest, size_t idx, float sum) { dest[idx] = sum; }, 0);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 
 	std::cout << "v3 - 128 block size ..." << std::endl;
 	blockSize.x = 128;
 	gridSize = GetGridSize(blockSize, height);
-	Matrix2Vector3B << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
+	Matrix2VectorSharedMem << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	/*std::cout << "v2 - 256 block size ..." << std::endl;
@@ -308,7 +313,7 @@ void RunMatrixVectorBenchmarks(size_t dataSize) {
 	blockSize.x = 64;
 	gridSize = GetGridSize(blockSize, height);
 	Matrix2VectorPartitionB << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
+	CUDA_CHECK(cudaDeviceSynchronize());*/
 
 	std::cout << "vPart - 128 block size ..." << std::endl;
 	blockSize.x = 128;
@@ -316,7 +321,7 @@ void RunMatrixVectorBenchmarks(size_t dataSize) {
 	Matrix2VectorPartitionB << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
-	std::cout << "vPart - 256 block size ..." << std::endl;
+	/*std::cout << "vPart - 256 block size ..." << std::endl;
 	blockSize.x = 256;
 	gridSize = GetGridSize(blockSize, height);
 	Matrix2VectorPartitionB << <gridSize, blockSize.x >> > (matrix.get(), sourceArray.get(), destArray.get(), width, height);

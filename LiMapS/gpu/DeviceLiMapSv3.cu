@@ -7,6 +7,8 @@
 #include "cublas_shared.h"
 
 #include "kernels.cuh"
+#include "kernels/square_sum.cuh"
+#include "kernels/matrix2vector.cuh"
 
 static __device__ float* _solutionD;
 static __device__ float* _signalD;
@@ -52,7 +54,7 @@ __global__ void GetAlphaImprv(size_t dictionaryWords, size_t signalSize) {
 		data = fmaf(dicInverse, signal, data);
 	}
 
-	KernelReduce<float*, float*>(data, signalSize, [](float* ptr1, float* ptr2, float sum) {
+	KernelReduce<void(float*, float*, float), float*, float*>(data, [](float* ptr1, float* ptr2, float sum) {
 		atomicAdd(ptr1, sum);
 		atomicAdd(ptr2, sum);
 		}, &_alphaD[idy], &_alphaNewD[idy]);

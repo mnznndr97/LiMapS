@@ -7,6 +7,8 @@
 #include "cublas_shared.h"
 
 #include "kernels.cuh"
+#include "kernels/square_sum.cuh"
+#include "kernels/matrix2vector.cuh"
 
 static __device__ float* _solutionD;
 static __device__ float* _signalD;
@@ -69,7 +71,6 @@ __global__ void LiMapS4(size_t dictionaryWords, size_t signalSize) {
 	dim3 dicGridSize = GetGridSize(blocks, dictionaryWords);
 	dim3 signalGridSize = GetGridSize(blocks, signalSize);
 	int sharedMemSize = blocks.x / warpSize;
-
 
 	SquareSumKrnlUnroll<8> << <red8SignalGridSize, blocks, sharedMemSize >> > (_signalD, signalSize, &_signalSquareSum);
 	CUDA_CHECKD(cudaDeviceSynchronize());

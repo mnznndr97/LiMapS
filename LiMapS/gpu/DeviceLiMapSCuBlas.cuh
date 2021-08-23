@@ -5,7 +5,7 @@
 #include "..\BaseLiMapS.h"
 #include <vector>
 
-class DeviceLiMapSv1 : public BaseLiMapS
+class DeviceLiMapSCuBlas : public BaseLiMapS
 {
 private:
 	cuda_ptr<float> _solution;
@@ -24,8 +24,8 @@ private:
 	const float _alphaElementTh = 1e-4f;
 	const float gamma = 1.01f;
 public:
-	DeviceLiMapSv1(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize);
-	~DeviceLiMapSv1();
+	DeviceLiMapSCuBlas(const float* solution, const float* signal, const float* D, const float* DINV, size_t dictionaryWords, size_t signalSize);
+	~DeviceLiMapSCuBlas();
 
 	void Execute(int iterations);
 

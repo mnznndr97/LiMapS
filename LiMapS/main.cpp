@@ -11,11 +11,13 @@
 #include "gpu/benchmarks.cuh"
 
 #include "cpu/HostLiMapS.h"
-#include "gpu/DeviceLiMapSv1.cuh"
+#include "gpu/DeviceLiMapSCuBlas.cuh"
 #include "gpu/DeviceLiMapSv2.cuh"
 #include "gpu/DeviceLiMapSv3.cuh"
 #include "gpu/DeviceLiMapSv4.cuh"
 #include "gpu/DeviceLiMapSTex.cuh"
+
+#include <nvfunctional>
 
 void RunLiMapS();
 
@@ -65,6 +67,8 @@ void RunLiMapSOnCPU(const float* dictionary, const float* dictionaryInverse, con
 	hostLiMapS.Execute(maxIterations);
 	sw.Stop();
 
+	// Let's compare our result with the solution "generated" by the matlab code
+	// Here we are comparing floats without an epsilon, but we should get very similar results
 	const std::vector<float>& alphaResult = hostLiMapS.GetAlpha();
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
@@ -79,14 +83,16 @@ void RunLiMapSOnCPU(const float* dictionary, const float* dictionaryInverse, con
 void RunLiMapSOnCuBlas(const float* dictionary, const float* dictionaryInverse, const float* signal, const float* actualSolution, size_t dictionaryWords, size_t signalSize, int maxIterations) {
 	std::cout << "Starting CuBlas  execution ..." << std::endl;
 
-	DeviceLiMapSv1 deviceLiMapSV1(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
+	DeviceLiMapSCuBlas deviceLiMapSCuBlas(actualSolution, signal, dictionary, dictionaryInverse, dictionaryWords, signalSize);
 
 	StopWatch sw;
 	sw.Restart();
-	deviceLiMapSV1.Execute(maxIterations);
+	deviceLiMapSCuBlas.Execute(maxIterations);
 	sw.Stop();
 
-	const std::vector<float>& alphaResult = deviceLiMapSV1.GetAlpha();
+	// Let's compare our result with the solution "generated" by the matlab code
+	// Here we are comparing floats without an epsilon, but we should get very similar results
+	const std::vector<float>& alphaResult = deviceLiMapSCuBlas.GetAlpha();
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
 		if (actualSolution[i] != alphaResult[i])
@@ -147,6 +153,8 @@ void RunFinalLiMapSKernel(const float* dictionary, const float* dictionaryInvers
 	deviceLiMapSv4.Execute(maxIterations);
 	sw.Stop();
 
+	// Let's compare our result with the solution "generated" by the matlab code
+	// Here we are comparing floats without an epsilon, but we should get very similar results
 	const std::vector<float>& alphaResult = deviceLiMapSv4.GetAlpha();
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
@@ -203,7 +211,7 @@ int main(int argn, char** argc)
 	}
 	else {
 		RunLiMapS();
-	}	
+	}
 	return 0;
 }
 
@@ -234,7 +242,7 @@ void RunLiMapS() {
 	ReadMatrix("data\\2\\in_D.txt", dictionary, signalSize, dictionaryWords);
 	ReadMatrix("data\\2\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
 
-		std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
+	std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
 	std::cout << "Signal size: " << signalSize << std::endl << std::endl;
 
 	// Stopping criteria declaration

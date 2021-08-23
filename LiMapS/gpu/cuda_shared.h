@@ -40,30 +40,30 @@ namespace cg = cooperative_groups;
     }                                                                                   \
 }
 
-template<class T> struct CudaPtrDeleter {
-    void operator()(T* ptr) const {
+template<class TCallback> struct CudaPtrDeleter {
+    void operator()(TCallback* ptr) const {
         CUDA_CHECK(cudaFree(ptr));
     }
 };
 
-template<typename T>
-using cuda_ptr = std::unique_ptr<T, CudaPtrDeleter<T>>;
+template<typename TCallback>
+using cuda_ptr = std::unique_ptr<TCallback, CudaPtrDeleter<TCallback>>;
 
-template<typename T>
-using cuda_managed_ptr = std::unique_ptr<T, CudaPtrDeleter<T>>;
+template<typename TCallback>
+using cuda_managed_ptr = std::unique_ptr<TCallback, CudaPtrDeleter<TCallback>>;
 
-template<class T>
-cuda_ptr<T> make_cuda(std::size_t count)
+template<class TCallback>
+cuda_ptr<TCallback> make_cuda(std::size_t count)
 {
-    T* ptr = NULL;
-	CUDA_CHECK(cudaMalloc(&ptr, sizeof(T) * count));
-	return cuda_ptr<T>(ptr);
+    TCallback* ptr = NULL;
+	CUDA_CHECK(cudaMalloc(&ptr, sizeof(TCallback) * count));
+	return cuda_ptr<TCallback>(ptr);
 }
 
-template<class T>
-cuda_managed_ptr<T> make_cuda_managed(std::size_t count)
+template<class TCallback>
+cuda_managed_ptr<TCallback> make_cuda_managed(std::size_t count)
 {
-	T* ptr = NULL;
-	CUDA_CHECK(cudaMallocManaged<T>(&ptr, sizeof(T) * count, cudaMemAttachGlobal));
-	return cuda_managed_ptr<T>(ptr);
+	TCallback* ptr = NULL;
+	CUDA_CHECK(cudaMallocManaged<TCallback>(&ptr, sizeof(TCallback) * count, cudaMemAttachGlobal));
+	return cuda_managed_ptr<TCallback>(ptr);
 }
