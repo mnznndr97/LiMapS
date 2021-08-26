@@ -24,7 +24,7 @@ static __device__ float* _intermD;
 static __device__ float _signalSquareSum;
 static __device__ float _alphaDiffSquareSum;
 
-__global__ void LiMapS4(size_t dictionaryWords, size_t signalSize) {
+__global__ void LiMapS4(size_t dictionaryWords, size_t signalSize, int maxIterations) {
 	// 1) The first step of the LiMapS algorithm is to calculate the starting lamba coefficient. In order to do so, we need to calculate
 	// the signal norm. So we enqueue on the default stream the SquareSum operation and then we wait for it.
 	// The norm is foundamental for the next steps so there is nothing that we can do to avoid the sync time waste
@@ -56,7 +56,7 @@ __global__ void LiMapS4(size_t dictionaryWords, size_t signalSize) {
 
 	dim3 gridSize = signalGridSize;
 	int i = 0;
-	for (i = 0; i < 1000; i++)
+	for (i = 0; i < maxIterations; i++)
 	{
 		// We set the alphaOld as the current alpha. We can do this by just swapping the pointer, avoiding 
 		// useless data transfer
@@ -165,7 +165,7 @@ void DeviceLiMapSv4::Execute(int iterations)
 	// LiMapS kernel will dynamically launch its own kernels. So only one thread is necessary
 	// By doing this, we can erase the CPU-GPU communication time for launching kernels
 	cudaEventRecord(start);
-	LiMapS4 << < 1, 1 >> > (_dictionaryWords, _signalSize);
+	LiMapS4 << < 1, 1 >> > (_dictionaryWords, _signalSize, iterations);
 	cudaEventRecord(stop);
 
 	CUDA_CHECK(cudaMemcpyAsync(_alphaH.data(), _alphaPtr.get(), sizeof(float) * _dictionaryWords, cudaMemcpyDeviceToHost));

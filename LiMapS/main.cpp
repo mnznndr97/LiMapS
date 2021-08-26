@@ -19,7 +19,12 @@
 
 #include <nvfunctional>
 
-void RunLiMapS();
+void RunLiMapS(const std::string& dataIndex, const int signalSize, const int dictionaryWords);
+
+
+bool CheckSolutionAlphaMismatch(float solution, float alpha) {
+	return abs(solution - alpha) > 0.001;
+}
 
 void ReadColumnVector(const std::string& file, float* dest) {
 	std::ifstream stream(file);
@@ -72,7 +77,7 @@ void RunLiMapSOnCPU(const float* dictionary, const float* dictionaryInverse, con
 	const std::vector<float>& alphaResult = hostLiMapS.GetAlpha();
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
-		if (actualSolution[i] != alphaResult[i])
+		if (CheckSolutionAlphaMismatch(actualSolution[i], alphaResult[i]))
 		{
 			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from cpu" << std::endl;
 		}
@@ -95,7 +100,7 @@ void RunLiMapSOnCuBlas(const float* dictionary, const float* dictionaryInverse, 
 	const std::vector<float>& alphaResult = deviceLiMapSCuBlas.GetAlpha();
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
-		if (actualSolution[i] != alphaResult[i])
+		if (CheckSolutionAlphaMismatch(actualSolution[i], alphaResult[i]))
 		{
 			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from CuBlas" << std::endl;
 		}
@@ -116,7 +121,7 @@ void RunBaseLiMapSKernel(const float* dictionary, const float* dictionaryInverse
 	const std::vector<float>& alphaResult = deviceLiMapSv2.GetAlpha();
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
-		if (actualSolution[i] != alphaResult[i])
+		if (CheckSolutionAlphaMismatch(actualSolution[i], alphaResult[i]))
 		{
 			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from GPU" << std::endl;
 		}
@@ -136,7 +141,7 @@ void RunImprovedLiMapSKernel(const float* dictionary, const float* dictionaryInv
 	const std::vector<float>& alphaResult = deviceLiMapSv3.GetAlpha();
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
-		if (actualSolution[i] != alphaResult[i])
+		if (CheckSolutionAlphaMismatch(actualSolution[i], alphaResult[i]))
 		{
 			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from GPU" << std::endl;
 		}
@@ -153,17 +158,26 @@ void RunFinalLiMapSKernel(const float* dictionary, const float* dictionaryInvers
 	deviceLiMapSv4.Execute(maxIterations);
 	sw.Stop();
 
+	float error = 0.0f;
+	int mismatches = 0;
 	// Let's compare our result with the solution "generated" by the matlab code
 	// Here we are comparing floats without an epsilon, but we should get very similar results
 	const std::vector<float>& alphaResult = deviceLiMapSv4.GetAlpha();
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
-		if (actualSolution[i] != alphaResult[i])
+		if (CheckSolutionAlphaMismatch(actualSolution[i], alphaResult[i]))
 		{
 			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from GPU" << std::endl;
 		}
+
+		if (actualSolution[i] != alphaResult[i])
+		{
+			error += fabs(actualSolution[i] - alphaResult[i]);
+			++mismatches;
+		}
 	}
 	std::cout << "GPU kernel (final) execution time: " << sw.Elapsed() << " ms" << std::endl << std::endl;
+	std::cout << "GPU kernel mean error: " << error / mismatches << ", # of mismatches: " << mismatches << std::endl;
 }
 
 void RunTexLiMapSKernel(const float* dictionary, const float* dictionaryInverse, const float* signal, const float* actualSolution, size_t dictionaryWords, size_t signalSize, int maxIterations) {
@@ -178,7 +192,7 @@ void RunTexLiMapSKernel(const float* dictionary, const float* dictionaryInverse,
 	const std::vector<float>& alphaResult = deviceLiMapSTex.GetAlpha();
 	for (size_t i = 0; i < dictionaryWords; i++)
 	{
-		if (actualSolution[i] != alphaResult[i])
+		if (CheckSolutionAlphaMismatch(actualSolution[i], alphaResult[i]))
 		{
 			std::cout << "Actual solution[" << i << "] mismatch: " << actualSolution[i] << " from solution, " << alphaResult[i] << " from GPU" << std::endl;
 		}
@@ -213,20 +227,19 @@ int main(int argn, char** argc)
 		RunMatrixVectorBenchmarks(atoi(argc[2]));
 	}
 	else {
-		RunLiMapS();
+		RunLiMapS(std::string(argc[1]), atoi(argc[2]), atoi(argc[3]));
 	}
 	return 0;
 }
 
-void RunLiMapS() {
+void RunLiMapS(const std::string& dataIndex, const int signalSize, const int dictionaryWords) {
 	// Let' s  change the floating point precision when printing
 	std::cout.precision(std::numeric_limits<float>::max_digits10);
 	std::cout << " *** LiMapS Implementation ***" << std::endl;
 
-	// Data sizes are declared at compile time here for simplicity
-	const std::string dataIndex = "2";
-	const int signalSize = 2000;
-	const int dictionaryWords = 8000;
+	/*const std::string dataIndex = "T1";
+	const int signalSize = 200;
+	const int dictionaryWords = 300;*/
 
 	// We may use some async CUDA memories operation so better to declare our pointer as non-paginable memory
 	float* actualSolution;
@@ -247,11 +260,12 @@ void RunLiMapS() {
 	ReadMatrix("data\\" + dataIndex + "\\in_D.txt", dictionary, signalSize, dictionaryWords);
 	ReadMatrix("data\\" + dataIndex + "\\in_D_inverse.txt", dictionaryInverse, dictionaryWords, signalSize);
 
+	std::cout << "Data folder: " << dataIndex << std::endl;
 	std::cout << "# Dictionary atoms: " << dictionaryWords << std::endl;
 	std::cout << "Signal size: " << signalSize << std::endl << std::endl;
 
 	// Stopping criteria declaration
-	const int maxIterations = 1000;
+	const int maxIterations = 5000;
 
 	RunLiMapSOnCPU(dictionary, dictionaryInverse, signal, actualSolution, dictionaryWords, signalSize, maxIterations);
 
