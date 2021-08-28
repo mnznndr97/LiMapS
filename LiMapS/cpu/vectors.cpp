@@ -56,6 +56,7 @@ float GetDiffEuclideanNorm(const float* vector1, const float* vector2, size_t si
 	size_t index = 0;
 	for (index = 0; index < size / 8; index++)
 	{
+		// Simple data load, diff, square and cumulative sum here
 		__m256 data1 = _mm256_load_ps(vector1 + (index * 8));
 		__m256 data2 = _mm256_load_ps(vector2 + (index * 8));
 
@@ -84,6 +85,7 @@ float GetDotProduct(const float* v1, const float* v2, size_t size) {
 	size_t index = 0;
 	for (index = 0; index < size / 8; index++)
 	{
+		// Simple data load and packed dot product here
 		__m256 vec1 = _mm256_load_ps(v1 + (index * 8));
 		__m256 vec2 = _mm256_load_ps(v2 + (index * 8));
 		__m256 dotProduct = _mm256_dp_ps(vec1, vec2, 0xF1);
