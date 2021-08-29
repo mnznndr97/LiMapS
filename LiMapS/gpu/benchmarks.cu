@@ -335,7 +335,7 @@ void RunMatrixVectorBenchmarks(size_t dataSize) {
 	CUDA_CHECK(cudaDeviceSynchronize());*/
 
 	/* Version 2 - stream */
-	/*const int NSTREAM = 16;
+	const int NSTREAM = 16;
 	cudaStream_t cudaStreams[NSTREAM];
 	for (int i = 0; i < NSTREAM; i++)
 	{
@@ -357,6 +357,6 @@ void RunMatrixVectorBenchmarks(size_t dataSize) {
 	for (size_t i = 0; i < NSTREAM; i++)
 	{
 		CUDA_CHECK(cudaStreamDestroy(cudaStreams[i]));
-	}*/
+	}
 
 }
